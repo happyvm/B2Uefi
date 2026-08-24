@@ -159,12 +159,21 @@ if [ "$CONFIRM" -eq 1 ]; then
 fi
 
 # --- 3. Partition table backup ---
-backup_file="/root/$(basename "$DISK")-partition-table-$(date +%Y%m%d%H%M%S).backup"
+# Two artifacts are saved:
+#  - the sgdisk backup, replayable with scripts/linux/restore-partition-table.sh;
+#  - a raw dump of the first sector, which is the only copy of the *original MBR*
+#    (sgdisk --backup converts the layout to GPT in memory before writing, so it
+#    cannot represent the MBR itself). Kept for expert manual recovery.
+backup_stamp=$(date +%Y%m%d%H%M%S)
+backup_file="/root/$(basename "$DISK")-partition-table-${backup_stamp}.backup"
+mbr_backup_file="/root/$(basename "$DISK")-original-${backup_stamp}.mbr"
 echo
 echo "=== 2/8: backing up the partition table -> $backup_file ==="
 run sgdisk --backup="$backup_file" "$DISK"
+echo "    also dumping the raw first sector -> $mbr_backup_file"
+run dd if="$DISK" of="$mbr_backup_file" bs=512 count=1 status=none
 if [ "$CONFIRM" -eq 1 ]; then
-    chmod 600 "$backup_file"
+    chmod 600 "$backup_file" "$mbr_backup_file"
 fi
 
 # --- 4. MBR -> GPT conversion ---

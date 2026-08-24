@@ -24,6 +24,14 @@ This only works if the guest disk is still readable in BIOS mode, i.e. if you ro
 The original Gen 1 VM was never modified or deleted by `Convert-Gen1ToGen2.ps1` (it was only renamed to `-gen1-legacy`). To roll back:
 
 ```powershell
+.\scripts\hyperv\Restore-Gen1VM.ps1 -VMName "srv-app01" -Start
+```
+
+The script stops and removes the Generation 2 VM (VHDX files are preserved, only detached), then renames the legacy VM back to its original name. It verifies the legacy VM exists **and** is Generation 1 *before* removing anything — a missing legacy VM aborts the rollback rather than leaving you with neither VM.
+
+Manual equivalent:
+
+```powershell
 Stop-VM -Name "srv-app01" -TurnOff -Force   # stops the Gen 2 VM if it has started
 Remove-VM -Name "srv-app01" -Force          # deletes the Gen 2 VM (the VHDX is NOT deleted, only detached)
 Rename-VM -Name "srv-app01-gen1-legacy" -NewName "srv-app01"
@@ -31,6 +39,26 @@ Start-VM -Name "srv-app01"
 ```
 
 > Warning: if the guest disk had already been converted to GPT before the failure, the Gen 1 (BIOS) VM won't be able to boot from it either. In that case, restore the snapshot/checkpoint taken before the guest conversion.
+
+## Rollback — the guest disk (Linux)
+
+`convert-linux-to-uefi.sh` saves two artifacts under `/root` before it changes anything:
+
+| File | What it is |
+|---|---|
+| `<disk>-partition-table-<stamp>.backup` | `sgdisk` backup, replayable with the script below |
+| `<disk>-original-<stamp>.mbr` | Raw dump of the original first sector — the only copy of the real MBR |
+
+To list and replay the partition-table backup:
+
+```bash
+sudo ./scripts/linux/restore-partition-table.sh --disk /dev/sda --list
+sudo ./scripts/linux/restore-partition-table.sh --disk /dev/sda --confirm
+```
+
+**Know what this does and does not do.** It removes partition-table entries added after the backup (most usefully, the ESP). It does **not** convert the disk back to MBR: `sgdisk --backup` run against an MBR disk stores a GPT representation of that layout, so replaying it yields GPT. And it does not undo the `/etc/fstab` entry, the GRUB EFI installation, or the initramfs rebuild.
+
+For a genuine full rollback, restore the VM snapshot or checkpoint. That is what it is for.
 
 ## `MBR2GPT /validate` fails
 

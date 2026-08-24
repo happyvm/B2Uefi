@@ -1,4 +1,4 @@
-name: Lint
+name: CI
 
 on:
   push:
@@ -28,7 +28,35 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Run ShellCheck
-        run: shellcheck scripts/linux/*.sh
+        run: shellcheck scripts/linux/*.sh tests/*.sh
+
+  bash-tests:
+    name: Bash argument tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run bash test suite
+        run: ./tests/bash-args.test.sh
+
+  pester:
+    name: Pester (PowerShell convention tests)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Run Pester
+        shell: pwsh
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          Install-Module -Name Pester -Force -Scope CurrentUser -Repository PSGallery -SkipPublisherCheck -MinimumVersion 5.0.0
+
+          $config = New-PesterConfiguration
+          $config.Run.Path = './tests'
+          $config.Run.Exit = $true
+          $config.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $config
 
   psscriptanalyzer:
     name: PSScriptAnalyzer (PowerShell scripts)
@@ -43,7 +71,9 @@ jobs:
           $ErrorActionPreference = 'Stop'
           Install-Module -Name PSScriptAnalyzer -Force -Scope CurrentUser -Repository PSGallery
 
-          $results = Invoke-ScriptAnalyzer -Path ./scripts -Recurse -Settings ./scripts/PSScriptAnalyzerSettings.psd1
+          $results = @('./scripts', './tests') | ForEach-Object {
+              Invoke-ScriptAnalyzer -Path $_ -Recurse -Settings ./scripts/PSScriptAnalyzerSettings.psd1
+          }
 
           if ($results) {
               $results | Format-Table RuleName, Severity, ScriptName, Line, Message -AutoSize |

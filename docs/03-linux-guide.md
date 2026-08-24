@@ -54,6 +54,14 @@ sudo shutdown -h now
 ### 5. Reboot and validate
 
 ```bash
+sudo ./scripts/linux/verify-uefi-migration.sh
+```
+
+It confirms everything that must be true for the migration to be complete — booted in UEFI, disk is GPT, an ESP exists and is mounted, `/etc/fstab` persists it, a GRUB EFI binary is installed, and a firmware boot entry exists — and exits non-zero if any check fails.
+
+Manual equivalents, if you prefer to check by hand:
+
+```bash
 [ -d /sys/firmware/efi ] && echo "Booted in UEFI" || echo "Still in BIOS"
 efibootmgr -v
 lsblk -o NAME,PARTTYPE,FSTYPE,MOUNTPOINT

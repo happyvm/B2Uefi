@@ -47,10 +47,27 @@ As long as the VM hasn't successfully rebooted, simply switch `Firmware = bios` 
 
 ## Post-migration validation
 
+On the hypervisor side:
+
 ```powershell
 $vm = Get-VM "srv-app01"
 $vm.ExtensionData.Config.Firmware        # should return "efi"
 $vm.ExtensionData.Config.BootOptions.EfiSecureBootEnabled   # $true if enabled
+```
+
+Then validate inside the guest once it has booted — this is the check that actually proves the migration worked:
+
+```powershell
+.\scripts\windows\Test-UefiMigrationResult.ps1   # Windows guest
+```
+```bash
+sudo ./scripts/linux/verify-uefi-migration.sh    # Linux guest
+```
+
+Once validated, remove the pre-migration snapshot to reclaim datastore space:
+
+```powershell
+Get-Snapshot -VM "srv-app01" -Name "pre-uefi-migration" | Remove-Snapshot -Confirm:$false
 ```
 
 Next: [06-troubleshooting-rollback.md](06-troubleshooting-rollback.md)

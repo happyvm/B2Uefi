@@ -2,6 +2,18 @@
 
 ## 1. Backup
 
+This is the step the whole repository leans on: every conversion script assumes a restorable snapshot exists. Create it with the provided scripts rather than by hand, so the naming and description are consistent across a migration campaign:
+
+```powershell
+# VMware
+.\scripts\vmware\New-PreMigrationSnapshot.ps1 -VMName "srv-app01"
+
+# Hyper-V
+.\scripts\hyperv\New-PreMigrationCheckpoint.ps1 -VMName "srv-app01"
+```
+
+Both scripts report any snapshot the VM already carries and print the exact command to revert or to clean up afterwards.
+
 - **VMware snapshot** or **Hyper-V checkpoint** of the VM before any operation, in addition to a regular application-level backup (Veeam, etc.).
 - On the guest, export the current partition table:
   - Linux: `sgdisk --backup=/root/partition-table.backup /dev/sda` (also works on an MBR source)
@@ -45,7 +57,7 @@ Plan for a service interruption during:
 
 ## Summary checklist
 
-- [ ] Snapshot/checkpoint taken
+- [ ] Snapshot/checkpoint taken (`New-PreMigrationSnapshot.ps1` / `New-PreMigrationCheckpoint.ps1`)
 - [ ] Application backup validated and restorable
 - [ ] BitLocker suspended (if applicable)
 - [ ] Compatibility report generated (`Test-UefiReadiness.ps1` / `check-uefi-readiness.sh`) with no blocking error

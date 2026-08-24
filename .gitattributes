@@ -1,0 +1,14 @@
+# Normalize to LF in the repository for every text file. Without this, a clone
+# on Windows with core.autocrlf=true would rewrite the bash scripts to CRLF,
+# which breaks their shebang when they are copied to a Linux guest.
+* text=auto eol=lf
+
+*.sh   text eol=lf
+*.ps1  text eol=lf
+*.psd1 text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+
+# Backup artifacts are binary blobs, never diff them.
+*.backup binary
+*.mbr    binary

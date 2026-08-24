@@ -57,17 +57,20 @@ Stop-Computer  # or a clean shutdown from vCenter / Hyper-V Manager
 ### 5. Reboot and validate
 
 - The VM should boot straight into the Windows login screen (no "no bootable device" error/black screen).
-- Verify the effective boot mode:
+- Run the validation script inside the guest:
+
+```powershell
+.\scripts\windows\Test-UefiMigrationResult.ps1
+```
+
+It confirms the four things that must all be true — the firmware is UEFI, the system disk is GPT, an EFI System Partition exists, and the boot manager points at `bootmgfw.efi` — and exits non-zero if any of them fails. It also reminds you to re-enable BitLocker if it was suspended.
+
+Manual equivalents, if you prefer to check by hand:
 
 ```powershell
 $env:firmware_type      # should return "UEFI"
-Confirm-SecureBootUEFI   # $true if Secure Boot is enabled (optional, requires having enabled the option on the hypervisor side)
-```
-
-- Verify the disk style:
-
-```powershell
 Get-Disk | Select-Object Number, PartitionStyle
+Confirm-SecureBootUEFI   # $true if Secure Boot is enabled (optional, requires having enabled the option on the hypervisor side)
 ```
 
 ## Special cases

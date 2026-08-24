@@ -1,0 +1,25 @@
+# Partition table / MBR backups produced by scripts/linux/convert-linux-to-uefi.sh.
+# These describe real disk layouts and must never be committed.
+*.backup
+*.mbr
+
+# MBR2GPT logs (scripts/windows/Convert-WindowsToUefi.ps1 -LogDirectory)
+setupact.log
+setuperr.log
+diagerr.xml
+diagwrn.xml
+
+# PowerShell module payloads pulled in for local linting/testing
+Modules/
+*.nupkg
+
+# Test output
+testResults*.xml
+coverage*.xml
+
+# Editor / OS noise
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
