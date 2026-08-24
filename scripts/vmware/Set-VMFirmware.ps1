@@ -1,64 +1,95 @@
 <#
 .SYNOPSIS
-    Bascule le firmware d'une VM VMware entre BIOS et EFI.
+    Switches a VMware VM's firmware between BIOS and EFI.
 .DESCRIPTION
-    Necessite une session PowerCLI deja connectee (Connect-VIServer). La VM doit
-    etre eteinte. Le script applique Firmware via ReconfigVM_Task et ajuste
-    motherboardLayout en consequence (acpiHostBridges pour EFI, i440bxHostBridge
-    pour BIOS).
-    IMPORTANT : la conversion du disque invite (MBR->GPT + bootloader UEFI) doit
-    avoir ete effectuee AVANT de basculer une VM de BIOS vers EFI, sinon la VM ne
-    demarrera plus. Voir docs/02-windows-guide.md / docs/03-linux-guide.md.
+    Requires an already-connected PowerCLI session (Connect-VIServer). The VM must
+    be powered off. Applies Firmware via ReconfigVM_Task and adjusts
+    motherboardLayout accordingly (acpiHostBridges for EFI, i440bxHostBridge for
+    BIOS).
+
+    IMPORTANT: the guest OS conversion (MBR->GPT + UEFI bootloader) must already
+    be done BEFORE switching a VM from BIOS to EFI, otherwise the VM will fail to
+    boot. See docs/02-windows-guide.md / docs/03-linux-guide.md.
+
+    This changes how the VM boots. By default the script prompts for
+    confirmation (SupportsShouldProcess); pass -Force to skip the prompt for
+    unattended automation, or -WhatIf to preview without changing anything.
 .PARAMETER VMName
-    Nom exact de la VM cible.
+    Exact name of the target VM.
 .PARAMETER Firmware
-    'efi' ou 'bios'.
+    'efi' or 'bios'.
 .PARAMETER EnableSecureBoot
-    Active Secure Boot en plus du passage en EFI (necessite hardware version >= 13
-    et un bootloader/kernel signe cote invite).
+    Also enables Secure Boot when switching to EFI (requires hardware version
+    >= 13 and a signed bootloader/kernel on the guest side).
+.PARAMETER Force
+    Suppresses the confirmation prompt.
 .EXAMPLE
     .\Set-VMFirmware.ps1 -VMName "srv-app01" -Firmware efi
 .EXAMPLE
-    .\Set-VMFirmware.ps1 -VMName "srv-app01" -Firmware efi -EnableSecureBoot
+    .\Set-VMFirmware.ps1 -VMName "srv-app01" -Firmware efi -EnableSecureBoot -Force
 #>
-[CmdletBinding(SupportsShouldProcess)]
+[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
 param(
     [Parameter(Mandatory)]
+    [ValidateNotNullOrEmpty()]
     [string]$VMName,
 
     [Parameter(Mandatory)]
     [ValidateSet('efi', 'bios')]
     [string]$Firmware,
 
-    [switch]$EnableSecureBoot
+    [switch]$EnableSecureBoot,
+
+    [switch]$Force
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+if (-not (Get-Module -Name VMware.VimAutomation.Core -ListAvailable)) {
+    throw "The VMware.VimAutomation.Core module (PowerCLI) is not installed. Install-Module VMware.PowerCLI."
+}
 if (-not $global:DefaultVIServers -or $global:DefaultVIServers.Count -eq 0) {
-    throw "Aucune session PowerCLI active. Connectez-vous d'abord avec Connect-VIServer -Server <vcenter>."
+    throw "No active PowerCLI session. Connect first with Connect-VIServer -Server <vcenter>."
 }
 
 if ($EnableSecureBoot -and $Firmware -ne 'efi') {
-    throw "Secure Boot requiert -Firmware efi."
+    throw "Secure Boot requires -Firmware efi."
 }
 
 $vm = Get-VM -Name $VMName -ErrorAction Stop
+if (@($vm).Count -gt 1) {
+    throw "Multiple VMs match the name '$VMName'. Use an exact, unambiguous name."
+}
 if ($vm.PowerState -ne 'PoweredOff') {
-    throw "La VM '$VMName' doit etre eteinte avant de changer son firmware (etat actuel : $($vm.PowerState)). Ce script ne l'arrete pas automatiquement."
+    throw "VM '$VMName' must be powered off before changing its firmware (current state: $($vm.PowerState)). This script does not stop it automatically."
 }
 
 $currentFirmware = $vm.ExtensionData.Config.Firmware
-Write-Host "VM '$VMName' - firmware actuel : $currentFirmware -> cible : $Firmware" -ForegroundColor Cyan
+if ($currentFirmware -eq $Firmware -and -not $EnableSecureBoot) {
+    Write-Host "VM '$VMName' is already using firmware '$Firmware'. Nothing to do." -ForegroundColor Yellow
+    return
+}
+
+Write-Host "VM '$VMName' - current firmware: $currentFirmware -> target: $Firmware" -ForegroundColor Cyan
 
 if ($EnableSecureBoot) {
-    $hwVersion = [int]($vm.ExtensionData.Config.Version -replace '\D', '')
+    $hwVersion = 0
+    if ($vm.ExtensionData.Config.Version -match '(\d+)') {
+        $hwVersion = [int]$Matches[1]
+    }
     if ($hwVersion -lt 13) {
-        throw "Secure Boot necessite hardware version >= 13 (version actuelle : $($vm.ExtensionData.Config.Version)). Mettez a niveau le hardware de la VM avant de continuer."
+        throw "Secure Boot requires hardware version >= 13 (current version: $($vm.ExtensionData.Config.Version)). Upgrade the VM hardware version before continuing."
     }
 }
 
-if (-not $PSCmdlet.ShouldProcess("VM $VMName", "Definir firmware=$Firmware" + $(if ($EnableSecureBoot) { ' + Secure Boot' } else { '' }))) {
+if ($Force) {
+    $ConfirmPreference = 'None'
+}
+
+$actionDescription = "Set firmware=$Firmware"
+if ($EnableSecureBoot) { $actionDescription += ' + Secure Boot' }
+if (-not $PSCmdlet.ShouldProcess("VM $VMName", $actionDescription)) {
     return
 }
 
@@ -72,16 +103,24 @@ if ($Firmware -eq 'efi') {
     $spec.BootOptions = $bootOptions
 }
 
-$task = $vm.ExtensionData.ReconfigVM_Task($spec)
-$taskView = Get-Task -Id ("Task-$($task.Value)")
-$taskView | Wait-Task | Out-Null
+try {
+    $taskMoRef = $vm.ExtensionData.ReconfigVM_Task($spec)
+    $taskView = Get-Task -Id ("Task-$($taskMoRef.Value)")
+    $taskView = $taskView | Wait-Task -ErrorAction Stop
+} catch {
+    throw "Firmware reconfiguration failed for VM '$VMName': $($_.Exception.Message)"
+}
 
-$vm = Get-VM -Name $VMName
-Write-Host "Termine. Firmware actuel : $($vm.ExtensionData.Config.Firmware)" -ForegroundColor Green
+if ($taskView.State -ne 'Success') {
+    throw "The reconfiguration task did not complete successfully (state: $($taskView.State))."
+}
+
+$vm = Get-VM -Name $VMName -ErrorAction Stop
+Write-Host "Done. Current firmware: $($vm.ExtensionData.Config.Firmware)" -ForegroundColor Green
 if ($EnableSecureBoot) {
-    Write-Host "Secure Boot : $($vm.ExtensionData.Config.BootOptions.EfiSecureBootEnabled)" -ForegroundColor Green
+    Write-Host "Secure Boot: $($vm.ExtensionData.Config.BootOptions.EfiSecureBootEnabled)" -ForegroundColor Green
 }
 
 if ($Firmware -eq 'efi') {
-    Write-Host "`nRappel : demarrez la VM et validez le boot UEFI avant toute autre modification (voir docs/06-troubleshooting-rollback.md en cas d'echec)." -ForegroundColor Yellow
+    Write-Host "`nReminder: power on the VM and validate the UEFI boot before making any further changes (see docs/06-troubleshooting-rollback.md if it fails)." -ForegroundColor Yellow
 }

@@ -1,44 +1,57 @@
 <#
 .SYNOPSIS
-    Migre une VM Hyper-V Generation 1 (BIOS) vers une nouvelle VM Generation 2 (UEFI).
+    Migrates a Hyper-V Generation 1 (BIOS) VM to a new Generation 2 (UEFI) VM.
 .DESCRIPTION
-    Hyper-V ne permet pas de changer la generation d'une VM existante. Ce script
-    automatise la methode documentee par Microsoft :
-      1. Verifie que la VM source est eteinte, en Generation 1, avec disque(s) VHDX.
-      2. Renomme la VM source en "<Nom>-gen1-legacy" (JAMAIS supprimee automatiquement).
-      3. Cree une nouvelle VM Generation 2 avec le nom d'origine, en recopiant
-         memoire, vCPU, adaptateurs reseau (synthetiques).
-      4. Rattache le(s) meme(s) fichier(s) VHDX sur un controleur SCSI.
-      5. Configure Secure Boot selon -OSType.
-    PREREQUIS : le disque invite de la VM source doit deja avoir ete converti en
-    GPT avec un bootloader UEFI (scripts/windows/Convert-WindowsToUefi.ps1 ou
-    scripts/linux/convert-linux-to-uefi.sh) AVANT d'executer ce script.
-    Le fichier VHDX reste reference par les DEUX VM (source renommee + nouvelle) ;
-    Hyper-V empeche via verrou fichier de demarrer les deux simultanement, mais
-    ne demarrez jamais manuellement la VM "-gen1-legacy" sauf pour un rollback
-    volontaire (voir docs/06-troubleshooting-rollback.md).
+    Hyper-V does not allow changing the generation of an existing VM. This script
+    automates the method documented by Microsoft:
+      1. Verifies the source VM is powered off, Generation 1, with VHDX disk(s).
+      2. Renames the source VM to "<Name>-gen1-legacy" (NEVER deleted automatically).
+      3. Creates a new Generation 2 VM with the original name, replicating
+         memory, vCPU, and network adapters (synthetic).
+      4. Attaches the same VHDX file(s) to a SCSI controller.
+      5. Configures Secure Boot based on -OSType.
+
+    PREREQUISITE: the source VM's guest disk must already have been converted to
+    GPT with a UEFI bootloader (scripts/windows/Convert-WindowsToUefi.ps1 or
+    scripts/linux/convert-linux-to-uefi.sh) BEFORE running this script.
+
+    The VHDX file remains referenced by BOTH VMs (renamed source + new VM);
+    Hyper-V's file locking prevents starting both at once, but never manually
+    start the "-gen1-legacy" VM except for a deliberate rollback (see
+    docs/06-troubleshooting-rollback.md).
+
+    This creates a new VM and renames the source VM. By default the script
+    prompts for confirmation (SupportsShouldProcess); pass -Force to skip the
+    prompt for unattended automation, or -WhatIf to preview without changing
+    anything. On any failure after the rename, the script automatically
+    attempts to roll back (remove the partially created VM, rename the source
+    VM back to its original name).
 .PARAMETER SourceVMName
-    Nom de la VM Generation 1 a migrer.
+    Name of the Generation 1 VM to migrate.
 .PARAMETER NewVMName
-    Nom de la nouvelle VM Generation 2 (par defaut : identique a SourceVMName).
+    Name of the new Generation 2 VM (default: same as SourceVMName).
 .PARAMETER OSType
-    'Windows' ou 'Linux' - determine le template Secure Boot applique.
+    'Windows' or 'Linux' - determines the Secure Boot template applied.
 .PARAMETER DisableSecureBoot
-    Desactive Secure Boot (necessaire pour certains noyaux Linux non signes).
+    Disables Secure Boot (needed for some unsigned Linux kernels).
 .PARAMETER VMPath
-    Dossier de configuration de la nouvelle VM (par defaut : chemin par defaut de l'hote).
+    Configuration folder for the new VM (default: the host's default VM path).
 .PARAMETER Start
-    Demarre automatiquement la nouvelle VM apres creation.
+    Automatically starts the new VM after creation.
+.PARAMETER Force
+    Suppresses the confirmation prompt.
 .EXAMPLE
     .\Convert-Gen1ToGen2.ps1 -SourceVMName "srv-app01" -OSType Windows
 .EXAMPLE
-    .\Convert-Gen1ToGen2.ps1 -SourceVMName "srv-web01" -OSType Linux -Start
+    .\Convert-Gen1ToGen2.ps1 -SourceVMName "srv-web01" -OSType Linux -Start -Force
 #>
-[CmdletBinding(SupportsShouldProcess)]
+[CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
 param(
     [Parameter(Mandatory)]
+    [ValidateNotNullOrEmpty()]
     [string]$SourceVMName,
 
+    [ValidateNotNullOrEmpty()]
     [string]$NewVMName = $SourceVMName,
 
     [Parameter(Mandatory)]
@@ -47,35 +60,47 @@ param(
 
     [switch]$DisableSecureBoot,
 
+    [ValidateNotNullOrEmpty()]
     [string]$VMPath,
 
-    [switch]$Start
+    [switch]$Start,
+
+    [switch]$Force
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Import-Module Hyper-V -ErrorAction Stop
 
 $sourceVM = Get-VM -Name $SourceVMName -ErrorAction Stop
+if (@($sourceVM).Count -gt 1) {
+    throw "Multiple VMs match the name '$SourceVMName'. Use an exact, unambiguous name."
+}
 
 if ($sourceVM.State -ne 'Off') {
-    throw "La VM '$SourceVMName' doit etre eteinte (etat actuel : $($sourceVM.State))."
+    throw "VM '$SourceVMName' must be powered off (current state: $($sourceVM.State))."
 }
 if ($sourceVM.Generation -ne 1) {
-    throw "La VM '$SourceVMName' est deja en Generation $($sourceVM.Generation) - rien a migrer."
+    throw "VM '$SourceVMName' is already Generation $($sourceVM.Generation) - nothing to migrate."
 }
 
 $disks = Get-VMHardDiskDrive -VMName $SourceVMName
 if (-not $disks) {
-    throw "Aucun disque dur trouve sur '$SourceVMName'."
+    throw "No hard disk found on '$SourceVMName'."
 }
 $nonVhdx = $disks | Where-Object { [System.IO.Path]::GetExtension($_.Path) -ine '.vhdx' }
 if ($nonVhdx) {
     $paths = ($nonVhdx | ForEach-Object { $_.Path }) -join ', '
-    throw "Generation 2 ne supporte que le VHDX. Convertissez d'abord : $paths (Convert-VHD -Path <src.vhd> -DestinationPath <dst.vhdx>)."
+    throw "Generation 2 only supports VHDX. Convert first: $paths (Convert-VHD -Path <src.vhd> -DestinationPath <dst.vhdx>)."
+}
+foreach ($disk in $disks) {
+    if (-not (Test-Path -LiteralPath $disk.Path)) {
+        throw "Disk file not found: $($disk.Path)"
+    }
 }
 
 if (Get-VM -Name $NewVMName -ErrorAction SilentlyContinue) {
-    throw "Une VM nommee '$NewVMName' existe deja. Choisissez un autre -NewVMName ou renommez/supprimez la VM existante."
+    throw "A VM named '$NewVMName' already exists. Choose a different -NewVMName, or rename/remove the existing VM."
 }
 
 $memory = Get-VMMemory -VMName $SourceVMName
@@ -85,23 +110,31 @@ $netAdapters = Get-VMNetworkAdapter -VMName $SourceVMName
 if (-not $VMPath) {
     $VMPath = (Get-VMHost).VirtualMachinePath
 }
+if (-not (Test-Path -LiteralPath $VMPath)) {
+    throw "VM path '$VMPath' does not exist or is not accessible."
+}
 
-Write-Host "=== Migration Gen1 -> Gen2 : $SourceVMName -> $NewVMName ===" -ForegroundColor Cyan
-Write-Host "Memoire : $($memory.Startup / 1GB) Go (dynamique: $($memory.DynamicMemoryEnabled))"
+Write-Host "=== Gen1 -> Gen2 migration: $SourceVMName -> $NewVMName ===" -ForegroundColor Cyan
+Write-Host "Memory  : $($memory.Startup / 1GB) GB (dynamic: $($memory.DynamicMemoryEnabled))"
 Write-Host "vCPU    : $($processor.Count)"
-Write-Host "Reseau  : $(($netAdapters | ForEach-Object { $_.SwitchName }) -join ', ')"
-Write-Host "Disques : $(($disks | ForEach-Object { $_.Path }) -join ', ')"
+Write-Host "Network : $(($netAdapters | ForEach-Object { $_.SwitchName }) -join ', ')"
+Write-Host "Disks   : $(($disks | ForEach-Object { $_.Path }) -join ', ')"
 
-if (-not $PSCmdlet.ShouldProcess("$SourceVMName -> $NewVMName", "Migrer vers Generation 2")) {
+if ($Force) {
+    $ConfirmPreference = 'None'
+}
+
+if (-not $PSCmdlet.ShouldProcess("$SourceVMName -> $NewVMName", "Migrate to Generation 2")) {
     return
 }
 
 $legacyName = "$SourceVMName-gen1-legacy"
-Write-Host "`nRenommage de la VM source en '$legacyName' (conservee intacte pour rollback)..." -ForegroundColor Yellow
+Write-Host "`nRenaming the source VM to '$legacyName' (kept intact for rollback)..." -ForegroundColor Yellow
 Rename-VM -VM $sourceVM -NewName $legacyName
 
+$newVM = $null
 try {
-    Write-Host "Creation de la VM Generation 2 '$NewVMName'..." -ForegroundColor Cyan
+    Write-Host "Creating Generation 2 VM '$NewVMName'..." -ForegroundColor Cyan
     $newVM = New-VM -Name $NewVMName -Generation 2 -MemoryStartupBytes $memory.Startup -Path $VMPath -NoVHD
 
     Set-VMProcessor -VM $newVM -Count $processor.Count
@@ -133,31 +166,48 @@ try {
     }
     Set-VMFirmware @secureBootParams -FirstBootDevice $bootDisk
 
-    Write-Host "`nVM '$NewVMName' creee avec succes (Generation 2)." -ForegroundColor Green
-    $secureBootMsg = "Secure Boot : $($secureBootParams['EnableSecureBoot'])"
+    Write-Host "`nVM '$NewVMName' created successfully (Generation 2)." -ForegroundColor Green
+    $secureBootMsg = "Secure Boot: $($secureBootParams['EnableSecureBoot'])"
     if ($secureBootParams.ContainsKey('SecureBootTemplate')) {
         $secureBootMsg += " (template: $($secureBootParams['SecureBootTemplate']))"
     }
     Write-Host $secureBootMsg
 
     if ($Start) {
-        Write-Host "Demarrage de '$NewVMName'..." -ForegroundColor Cyan
+        Write-Host "Starting '$NewVMName'..." -ForegroundColor Cyan
         Start-VM -Name $NewVMName
     } else {
-        Write-Host "`nVM non demarree (utilisez -Start ou 'Start-VM -Name $NewVMName' apres verification)." -ForegroundColor Yellow
+        Write-Host "`nVM not started (use -Start, or run 'Start-VM -Name $NewVMName' after review)." -ForegroundColor Yellow
     }
 }
 catch {
-    Write-Warning "Echec de la migration : $($_.Exception.Message)"
-    Write-Warning "La VM source a ete renommee '$legacyName' mais n'a PAS ete modifiee. Pour revenir en arriere : Rename-VM -Name '$legacyName' -NewName '$SourceVMName'."
-    throw
+    $failure = $_
+    Write-Warning "Migration failed: $($failure.Exception.Message)"
+
+    if ($newVM) {
+        try {
+            Remove-VM -VM $newVM -Force -ErrorAction Stop
+            Write-Warning "Partially created VM '$NewVMName' has been removed (disk files were not touched)."
+        } catch {
+            Write-Warning "Could not remove the partially created VM '$NewVMName': $($_.Exception.Message). Remove it manually before retrying."
+        }
+    }
+
+    try {
+        Rename-VM -Name $legacyName -NewName $SourceVMName -ErrorAction Stop
+        Write-Warning "Source VM automatically renamed back to '$SourceVMName'."
+    } catch {
+        Write-Warning "Could not rename the source VM back automatically: $($_.Exception.Message). Run manually: Rename-VM -Name '$legacyName' -NewName '$SourceVMName'"
+    }
+
+    throw $failure
 }
 
 Write-Host @"
 
-Prochaines etapes :
-  1. Valider le demarrage et le fonctionnement de '$NewVMName'.
-  2. Une fois valide, supprimer la VM legacy (les fichiers VHDX ne sont PAS touches) :
+Next steps:
+  1. Validate that '$NewVMName' boots and behaves correctly.
+  2. Once validated, remove the legacy VM (the VHDX files are NOT touched):
        Remove-VM -Name '$legacyName' -Force
-  3. En cas de probleme, voir docs/06-troubleshooting-rollback.md.
+  3. If something goes wrong, see docs/06-troubleshooting-rollback.md.
 "@ -ForegroundColor Cyan

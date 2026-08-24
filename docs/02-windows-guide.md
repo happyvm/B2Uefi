@@ -1,79 +1,79 @@
-# Guide Windows : conversion invité MBR → GPT/UEFI
+# Windows guide: guest MBR → GPT/UEFI conversion
 
-S'applique à Windows 10/11 et Windows Server 2012 R2+ tournant en VM (VMware ou Hyper-V), disque système actuellement en BIOS/MBR.
+Applies to Windows 10/11 and Windows Server 2012 R2+ running as a VM (VMware or Hyper-V), with a system disk currently in BIOS/MBR mode.
 
-## Principe
+## Principle
 
-L'outil natif `MBR2GPT.exe` (présent dans `C:\Windows\System32` depuis Windows 10 1703) convertit la table de partitions **en place**, sans perte de données, et prépare les partitions système nécessaires au boot UEFI (ESP, MSR). Il peut s'exécuter :
+The native `MBR2GPT.exe` tool (present in `C:\Windows\System32` since Windows 10 1703) converts the partition table **in place**, without data loss, and prepares the system partitions needed for UEFI boot (ESP, MSR). It can run:
 
-- depuis l'environnement de récupération (WinRE), sans `/allowFullOS` ;
-- depuis l'OS complet démarré normalement, avec `/allowFullOS` (le cas d'usage principal pour une VM en production).
+- from the Windows Recovery Environment (WinRE), without `/allowFullOS`;
+- from the fully booted OS, with `/allowFullOS` (the main use case for a production VM).
 
-**Important** : `MBR2GPT` ne change pas le firmware de la VM. Après conversion, l'OS boote encore momentanément en BIOS (le firmware de la VM n'a pas changé). Ce n'est qu'après avoir basculé le firmware côté hyperviseur (VMware) ou recréé la VM en Gen 2 (Hyper-V) que le prochain démarrage utilisera UEFI.
+**Important**: `MBR2GPT` does not change the VM's firmware. After conversion, the OS still boots in BIOS mode momentarily (the VM firmware hasn't changed). It's only after switching the firmware on the hypervisor side (VMware) or recreating the VM as Gen 2 (Hyper-V) that the next boot will actually use UEFI.
 
-## Étapes
+## Steps
 
-### 1. Vérifier l'éligibilité
+### 1. Check eligibility
 
 ```powershell
 .\scripts\windows\Test-UefiReadiness.ps1
 ```
 
-Ce script vérifie : build Windows, style de partition actuel, TPM (si Secure Boot est visé), Secure Boot déjà actif ou non, et exécute `mbr2gpt /validate`.
+This script checks: Windows build, current partition style, TPM (if Secure Boot is targeted), whether Secure Boot is already active, and runs `mbr2gpt /validate`.
 
-Vous pouvez aussi lancer directement :
+You can also run directly:
 
 ```powershell
 mbr2gpt /validate /disk:0 /allowFullOS
 ```
 
-Une validation réussie affiche `MBR2GPT: Validation completed successfully`.
+A successful validation prints `MBR2GPT: Validation completed successfully`.
 
-### 2. Convertir le disque
+### 2. Convert the disk
 
 ```powershell
 .\scripts\windows\Convert-WindowsToUefi.ps1 -DiskNumber 0
 ```
 
-Ce script exécute `mbr2gpt /validate` puis `mbr2gpt /convert` avec journalisation, et affiche un rappel des étapes suivantes. Équivalent manuel :
+This script runs `mbr2gpt /validate` then `mbr2gpt /convert` with logging, and prints a reminder of the next steps. Manual equivalent:
 
 ```powershell
 mbr2gpt /convert /disk:0 /allowFullOS
 ```
 
-Ne redémarrez pas immédiatement l'OS entre la conversion et le changement de firmware : le disque est désormais en GPT mais la VM démarre toujours en BIOS via l'ancien chemin de boot, ce qui fonctionne encore grâce à la compatibilité descendante — mais l'objectif est de ne pas laisser la VM dans cet état intermédiaire plus longtemps que nécessaire.
+Don't leave the VM in this intermediate state (disk converted but firmware not switched) any longer than necessary — proceed straight to shutting it down and switching the firmware.
 
-### 3. Éteindre la VM
-
-```powershell
-Stop-Computer  # ou arrêt propre depuis vCenter / Hyper-V Manager
-```
-
-### 4. Basculer le firmware côté hyperviseur
-
-- **VMware** : voir [04-vmware-guide.md](04-vmware-guide.md), script `scripts/vmware/Set-VMFirmware.ps1`.
-- **Hyper-V** : voir [05-hyperv-guide.md](05-hyperv-guide.md) — nécessite de recréer la VM en Generation 2 (`scripts/hyperv/Convert-Gen1ToGen2.ps1`), le disque VHDX converti est réattaché à la nouvelle VM.
-
-### 5. Redémarrer et valider
-
-- La VM doit démarrer directement sur le menu Windows (pas d'écran noir/erreur "no bootable device").
-- Vérifier le mode de boot effectif :
+### 3. Shut down the VM
 
 ```powershell
-$env:firmware_type      # doit renvoyer "UEFI"
-Confirm-SecureBootUEFI   # $true si Secure Boot est activé (optionnel, nécessite d'avoir activé l'option côté hyperviseur)
+Stop-Computer  # or a clean shutdown from vCenter / Hyper-V Manager
 ```
 
-- Vérifier le style de disque :
+### 4. Switch the firmware on the hypervisor side
+
+- **VMware**: see [04-vmware-guide.md](04-vmware-guide.md), script `scripts/vmware/Set-VMFirmware.ps1`.
+- **Hyper-V**: see [05-hyperv-guide.md](05-hyperv-guide.md) — requires recreating the VM as Generation 2 (`scripts/hyperv/Convert-Gen1ToGen2.ps1`); the converted VHDX disk is reattached to the new VM.
+
+### 5. Reboot and validate
+
+- The VM should boot straight into the Windows login screen (no "no bootable device" error/black screen).
+- Verify the effective boot mode:
+
+```powershell
+$env:firmware_type      # should return "UEFI"
+Confirm-SecureBootUEFI   # $true if Secure Boot is enabled (optional, requires having enabled the option on the hypervisor side)
+```
+
+- Verify the disk style:
 
 ```powershell
 Get-Disk | Select-Object Number, PartitionStyle
 ```
 
-## Cas particuliers
+## Special cases
 
-- **Disque avec plus de 3 partitions primaires** : `MBR2GPT` échoue à la validation. Il faut d'abord fusionner/supprimer des partitions superflues (ou utiliser `/allowFullOS` après nettoyage) avant de relancer.
-- **BitLocker actif** : suspendre le chiffrement (`Suspend-BitLocker -MountPoint "C:"`) avant conversion, le réactiver après validation du boot UEFI.
-- **Windows 11 / Credential Guard / VBS** : ces fonctions nécessitent en plus Secure Boot et un TPM 2.0 exposé par la VM — à activer séparément côté hyperviseur une fois le boot UEFI validé (VMware : `EfiSecureBootEnabled`, vTPM 2.0 ; Hyper-V : `Set-VMKeyProtector` + `Enable-VMTPM` sur la VM Gen 2, qui nécessite Host Guardian Service ou un hôte autonome avec chiffrement).
+- **Disk with more than 3 primary partitions**: `MBR2GPT` fails validation. You must first merge/remove extra partitions (or use `/allowFullOS` after cleanup) before retrying.
+- **BitLocker active**: suspend encryption (`Suspend-BitLocker -MountPoint "C:"`) before conversion, re-enable it after validating the UEFI boot.
+- **Windows 11 / Credential Guard / VBS**: these features additionally require Secure Boot and a TPM 2.0 exposed by the VM — enable them separately on the hypervisor side once the UEFI boot has been validated (VMware: `EfiSecureBootEnabled`, vTPM 2.0; Hyper-V: `Set-VMKeyProtector` + `Enable-VMTPM` on the Gen 2 VM, which requires either the Host Guardian Service or a standalone host with encryption support).
 
-Suite : [04-vmware-guide.md](04-vmware-guide.md) ou [05-hyperv-guide.md](05-hyperv-guide.md).
+Next: [04-vmware-guide.md](04-vmware-guide.md) or [05-hyperv-guide.md](05-hyperv-guide.md).

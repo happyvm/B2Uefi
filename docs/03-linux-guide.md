@@ -1,72 +1,72 @@
-# Guide Linux : conversion invité MBR → GPT/UEFI
+# Linux guide: guest MBR → GPT/UEFI conversion
 
-S'applique aux distributions grand public (Debian/Ubuntu, RHEL/CentOS/Alma/Rocky, SUSE) tournant en VM (VMware ou Hyper-V), disque système actuellement en BIOS/MBR avec GRUB legacy.
+Applies to mainstream distributions (Debian/Ubuntu, RHEL/CentOS/Alma/Rocky, SUSE) running as a VM (VMware or Hyper-V), with a system disk currently in BIOS/MBR mode with legacy GRUB.
 
-## Principe
+## Principle
 
-Contrairement à Windows, Linux n'a pas d'outil unique "officiel" équivalent à `MBR2GPT`. La conversion se fait en trois opérations distinctes :
+Unlike Windows, Linux has no single "official" tool equivalent to `MBR2GPT`. Conversion is done through three separate operations:
 
-1. **Conversion de la table de partitions** MBR → GPT avec `sgdisk` (partie de `gdisk`/`gptfdisk`), qui préserve les partitions existantes et leurs données.
-2. **Création d'une ESP** (EFI System Partition, FAT32, flag `esp`) dans l'espace libre du disque, car un disque MBR n'en a jamais eu besoin.
-3. **Installation de GRUB en mode UEFI** (`grub-install --target=x86_64-efi`) et régénération de la configuration + de l'initramfs.
+1. **Partition table conversion** MBR → GPT with `sgdisk` (part of `gdisk`/`gptfdisk`), which preserves existing partitions and their data.
+2. **Creating an ESP** (EFI System Partition, FAT32, `esp` flag) in the disk's free space, since an MBR disk never needed one.
+3. **Installing GRUB in UEFI mode** (`grub-install --target=x86_64-efi`) and regenerating the config + the initramfs.
 
-Comme pour Windows, ceci ne change pas le firmware de la VM : tant que le firmware reste en BIOS côté hyperviseur, l'OS démarre encore via l'ancien chemin (`/boot/grub/i386-pc`). Ce n'est qu'après bascule firmware (VMware) ou recréation Gen 2 (Hyper-V) que GRUB-EFI prend le relais.
+As with Windows, this doesn't change the VM's firmware: as long as the firmware stays in BIOS mode on the hypervisor side, the OS still boots through the old path (`/boot/grub/i386-pc`). It's only after the firmware switch (VMware) or the Gen 2 recreation (Hyper-V) that GRUB-EFI takes over.
 
-## Étapes
+## Steps
 
-### 1. Vérifier l'éligibilité
+### 1. Check eligibility
 
 ```bash
 sudo ./scripts/linux/check-uefi-readiness.sh
 ```
 
-Vérifie : mode de boot actuel (`/sys/firmware/efi`), table de partitions (`parted`), espace libre disponible, présence des paquets nécessaires (`gdisk`, `grub-efi-*`), et détecte le gestionnaire de paquets (apt/dnf/yum/zypper).
+Checks: current boot mode (`/sys/firmware/efi`), partition table (`parted`), available free space, presence of required packages (`gdisk`, `grub-efi-*`), and detects the package manager (apt/dnf/yum/zypper).
 
-### 2. Convertir le disque
+### 2. Convert the disk
 
 ```bash
 sudo ./scripts/linux/convert-linux-to-uefi.sh --disk /dev/sda --confirm
 ```
 
-Sans `--confirm`, le script s'exécute en **mode simulation** (dry-run) et affiche uniquement les actions prévues. Le script :
+Without `--confirm`, the script runs in **simulation mode** (dry-run) and only prints the planned actions. The script:
 
-1. Sauvegarde la table de partitions actuelle (`sgdisk --backup`).
-2. Installe les paquets manquants (`gdisk`, `grub-efi-amd64`/`grub2-efi-x64`, `efibootmgr`, `dosfstools`).
-3. Crée une nouvelle partition ESP dans l'espace libre en fin de disque (par défaut 512 Mo, ajustable avec `--esp-size`).
-4. Formate l'ESP en FAT32 et positionne le flag `esp`/`boot`.
-5. Convertit la table de partitions en GPT (`sgdisk -g`).
-6. Monte l'ESP sur `/boot/efi`, met à jour `/etc/fstab` avec son UUID.
-7. Installe GRUB en mode UEFI et régénère `grub.cfg` + l'initramfs.
+1. Backs up the current partition table (`sgdisk --backup`).
+2. Installs missing packages (`gdisk`, `grub-efi-amd64`/`grub2-efi-x64`, `efibootmgr`, `dosfstools`).
+3. Creates a new ESP partition in the free space at the end of the disk (512 MB by default, adjustable with `--esp-size`).
+4. Formats the ESP as FAT32 and sets the `esp`/`boot` flag.
+5. Converts the partition table to GPT (`sgdisk -g`).
+6. Mounts the ESP on `/boot/efi`, updates `/etc/fstab` with its UUID.
+7. Installs GRUB in UEFI mode and regenerates `grub.cfg` + the initramfs.
 
-> ⚠️ Les étapes 3 et 5 modifient la structure du disque. Le script requiert `--confirm` explicitement et affiche un résumé avant toute écriture. Il est recommandé, sur un système critique, de lancer la conversion depuis un live-CD/rescue si possible plutôt qu'à chaud — le script fonctionne dans les deux cas mais le live-CD limite les risques si le disque système est en cours d'écriture intensive.
+> ⚠️ Steps 3 and 5 modify the disk's structure. The script requires `--confirm` explicitly and prints a summary before any write. On a critical system, it is recommended to run the conversion from a live-CD/rescue environment where possible rather than on a live system — the script works either way, but a live-CD limits risk if the system disk is under heavy write load.
 
-### 3. Éteindre la VM
+### 3. Shut down the VM
 
 ```bash
 sudo shutdown -h now
 ```
 
-### 4. Basculer le firmware côté hyperviseur
+### 4. Switch the firmware on the hypervisor side
 
-- **VMware** : voir [04-vmware-guide.md](04-vmware-guide.md).
-- **Hyper-V** : voir [05-hyperv-guide.md](05-hyperv-guide.md) — Secure Boot pour Linux doit utiliser le template `MicrosoftUEFICertificateAuthority` (et non `MicrosoftWindows`), ou être désactivé si le noyau/shim n'est pas signé.
+- **VMware**: see [04-vmware-guide.md](04-vmware-guide.md).
+- **Hyper-V**: see [05-hyperv-guide.md](05-hyperv-guide.md) — Secure Boot for Linux must use the `MicrosoftUEFICertificateAuthority` template (not `MicrosoftWindows`), or be disabled if the kernel/shim isn't signed.
 
-### 5. Redémarrer et valider
+### 5. Reboot and validate
 
 ```bash
-[ -d /sys/firmware/efi ] && echo "Démarrage en UEFI" || echo "Toujours en BIOS"
+[ -d /sys/firmware/efi ] && echo "Booted in UEFI" || echo "Still in BIOS"
 efibootmgr -v
 lsblk -o NAME,PARTTYPE,FSTYPE,MOUNTPOINT
 ```
 
-- `efibootmgr -v` doit lister une entrée de boot pointant vers `\EFI\<distro>\grubx64.efi` sur l'ESP.
-- `parted /dev/sda print` doit indiquer `Partition Table: gpt`.
+- `efibootmgr -v` should list a boot entry pointing to `\EFI\<distro>\grubx64.efi` on the ESP.
+- `parted /dev/sda print` should show `Partition Table: gpt`.
 
-## Cas particuliers
+## Special cases
 
-- **/boot séparé chiffré (LUKS)** : GRUB-EFI moderne (2.04+) supporte le déverrouillage LUKS au boot, mais vérifiez la version disponible sur votre distribution avant de migrer un système chiffré.
-- **Partitions logiques étendues (MBR)** : `sgdisk -g` les convertit en partitions GPT indépendantes ; vérifiez `/etc/fstab` après conversion, les UUID des partitions existantes ne changent pas mais un `blkid` de contrôle est recommandé.
-- **RHEL/CentOS** : le paquet est `grub2-efi-x64` + `shim-x64`, et la commande de régénération est `grub2-mkconfig -o /boot/efi/EFI/<id>/grub.cfg` (le script détecte automatiquement la famille de distribution).
-- **Secure Boot** : nécessite un shim signé (`shim-x64` fourni par la distribution), déjà installé par le script si le paquet est disponible dans les dépôts.
+- **Separate encrypted /boot (LUKS)**: modern GRUB-EFI (2.04+) supports LUKS unlocking at boot, but check the version available on your distribution before migrating an encrypted system.
+- **Extended/logical partitions (MBR)**: `sgdisk -g` converts them into independent GPT partitions; check `/etc/fstab` after conversion — UUIDs of existing partitions don't change, but a sanity-check `blkid` run is recommended.
+- **RHEL/CentOS**: the package is `grub2-efi-x64` + `shim-x64`, and the config-regeneration command is `grub2-mkconfig -o /boot/efi/EFI/<id>/grub.cfg` (the script automatically detects the distribution family).
+- **Secure Boot**: requires a signed shim (`shim-x64` provided by the distribution), already installed by the script if the package is available in the repositories.
 
-Suite : [04-vmware-guide.md](04-vmware-guide.md) ou [05-hyperv-guide.md](05-hyperv-guide.md).
+Next: [04-vmware-guide.md](04-vmware-guide.md) or [05-hyperv-guide.md](05-hyperv-guide.md).

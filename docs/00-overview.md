@@ -1,49 +1,49 @@
-# Vue d'ensemble : migration BIOS → UEFI
+# Overview: BIOS → UEFI migration
 
-## Pourquoi migrer
+## Why migrate
 
-- **Secure Boot** : nécessite UEFI, indispensable pour Windows 11, recommandé pour durcir les serveurs Linux.
-- **Support long terme** : Microsoft et la plupart des distributions Linux orientent leurs nouvelles fonctionnalités de boot vers UEFI (mesured boot, TPM, shielded VMs).
-- **Disques > 2 To** : le partitionnement MBR est limité à 2 To et 4 partitions primaires ; GPT (utilisé par UEFI) lève ces limites.
-- **Prérequis Windows Server 2022 / Windows 11** et de nombreuses stacks de sécurité (BitLocker + TPM, Credential Guard, VBS) qui exigent UEFI + Secure Boot.
+- **Secure Boot**: requires UEFI, mandatory for Windows 11, recommended to harden Linux servers too.
+- **Long-term support**: Microsoft and most Linux distributions are steering new boot-related features toward UEFI (measured boot, TPM, shielded VMs).
+- **Disks > 2 TB**: MBR partitioning is limited to 2 TB and 4 primary partitions; GPT (used by UEFI) removes these limits.
+- **Windows Server 2022 / Windows 11 requirement**, and many security stacks (BitLocker + TPM, Credential Guard, VBS) that require UEFI + Secure Boot.
 
-## Ce que "migrer" recouvre réellement
+## What "migrating" actually covers
 
-Une migration BIOS → UEFI touche **deux couches indépendantes** qui doivent être traitées dans le bon ordre :
+A BIOS → UEFI migration touches **two independent layers** that must be handled in the correct order:
 
-1. **La couche invité (guest OS)** : convertir la table de partitions du disque système de MBR vers GPT, et installer/reconfigurer le bootloader pour qu'il sache démarrer en mode UEFI (`bootmgfw.efi` sous Windows, `grubx64.efi` sous Linux).
-2. **La couche hyperviseur (firmware de la VM)** : indiquer à VMware ou Hyper-V que la VM doit désormais présenter un firmware UEFI au système d'exploitation invité, au lieu d'un BIOS legacy (SeaBIOS/PhoenixBIOS émulé).
+1. **The guest OS layer**: convert the system disk's partition table from MBR to GPT, and install/reconfigure the bootloader so it can boot in UEFI mode (`bootmgfw.efi` on Windows, `grubx64.efi` on Linux).
+2. **The hypervisor layer (VM firmware)**: tell VMware or Hyper-V that the VM should now present a UEFI firmware to the guest OS, instead of a legacy BIOS (emulated SeaBIOS/PhoenixBIOS).
 
-Ces deux étapes sont **liées mais asymétriques** :
+These two steps are **related but asymmetric**:
 
-- Convertir le disque en GPT sans basculer le firmware de la VM en UEFI → la VM ne démarre plus (le BIOS legacy ne sait pas lire un GPT contenant un ESP UEFI comme boot device).
-- Basculer le firmware en UEFI sans avoir converti le disque → la VM ne démarre plus (le firmware UEFI recherche un ESP FAT32 avec un chargeur `.efi`, qui n'existe pas sur un disque MBR/BIOS boot classique).
+- Converting the disk to GPT without switching the VM firmware to UEFI → the VM no longer boots (legacy BIOS cannot read a GPT disk containing a UEFI ESP as a boot device).
+- Switching the firmware to UEFI without having converted the disk → the VM no longer boots (UEFI firmware looks for a FAT32 ESP with a `.efi` loader, which doesn't exist on a classic MBR/BIOS-boot disk).
 
-L'ordre correct est donc toujours :
+The correct order is therefore always:
 
 ```
-1. Préparer le disque invité (conversion MBR→GPT + bootloader UEFI)  [OS encore démarré en BIOS]
-2. Éteindre la VM
-3. Basculer le firmware de la VM sur EFI côté hyperviseur
-4. Redémarrer -> la VM démarre désormais en UEFI
+1. Prepare the guest disk (MBR->GPT conversion + UEFI bootloader)  [OS still running in BIOS mode]
+2. Shut down the VM
+3. Switch the VM firmware to EFI on the hypervisor side
+4. Reboot -> the VM now boots in UEFI
 ```
 
-## Différence fondamentale VMware vs Hyper-V
+## Fundamental difference: VMware vs. Hyper-V
 
 | | VMware (ESXi/vSphere) | Hyper-V |
 |---|---|---|
-| Bascule BIOS→EFI sur une VM existante | **Oui**, changement d'un paramètre (`Firmware`) dans les options de démarrage de la VM, sans recréation | **Non**, impossible : le firmware (BIOS/UEFI) est fixé par la **génération** de la VM (Gen 1 = BIOS, Gen 2 = UEFI) et n'est pas modifiable après création |
-| Méthode de migration | `Set-VM`/API `ReconfigVM` sur la VM existante | Créer une **nouvelle VM Generation 2**, y rattacher le disque converti (VHDX), recopier la configuration (RAM, réseau, CPU) |
-| Voir | [docs/04-vmware-guide.md](04-vmware-guide.md) | [docs/05-hyperv-guide.md](05-hyperv-guide.md) |
+| Switching BIOS→EFI on an existing VM | **Yes**, a single parameter change (`Firmware`) in the VM's boot options, no recreation needed | **No**, impossible: firmware (BIOS/UEFI) is fixed by the VM's **generation** (Gen 1 = BIOS, Gen 2 = UEFI) and cannot be changed after creation |
+| Migration method | `Set-VM`/`ReconfigVM` API on the existing VM | Create a new **Generation 2 VM**, attach the converted disk (VHDX) to it, replicate the configuration (RAM, network, CPU) |
+| See | [docs/04-vmware-guide.md](04-vmware-guide.md) | [docs/05-hyperv-guide.md](05-hyperv-guide.md) |
 
-## Portée de ce dépôt
+## Scope of this repository
 
-| Dossier | Contenu |
+| Folder | Content |
 |---|---|
-| `docs/` | Guides détaillés par plateforme et par OS invité |
-| `scripts/windows/` | Vérification de compatibilité + conversion MBR→GPT (wrapper `MBR2GPT.exe`) pour l'OS invité Windows |
-| `scripts/linux/` | Vérification de compatibilité + conversion MBR→GPT + réinstallation GRUB-EFI pour l'OS invité Linux |
-| `scripts/vmware/` | Scripts PowerCLI pour auditer et basculer le firmware des VM VMware |
-| `scripts/hyperv/` | Scripts PowerShell pour auditer les VM Gen 1 et automatiser leur migration vers Gen 2 |
+| `docs/` | Detailed guides per platform and per guest OS |
+| `scripts/windows/` | Compatibility check + MBR→GPT conversion (`MBR2GPT.exe` wrapper) for the Windows guest OS |
+| `scripts/linux/` | Compatibility check + MBR→GPT conversion + GRUB-EFI reinstallation for the Linux guest OS |
+| `scripts/vmware/` | PowerCLI scripts to audit and switch the firmware of VMware VMs |
+| `scripts/hyperv/` | PowerShell scripts to audit Generation 1 VMs and automate their migration to Generation 2 |
 
-Lire ensuite : [docs/01-prerequisites.md](01-prerequisites.md).
+Next: [docs/01-prerequisites.md](01-prerequisites.md).

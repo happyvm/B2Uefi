@@ -1,30 +1,32 @@
 <#
 .SYNOPSIS
-    Rapporte la generation (1/2) de chaque VM Hyper-V de l'hote.
+    Reports the generation (1/2) of every VM on the Hyper-V host.
 .DESCRIPTION
-    Signale les VM Generation 1, candidates a une migration vers Generation 2,
-    ainsi que le format de leur(s) disque(s) (VHD/VHDX), sachant que Generation 2
-    n'accepte que du VHDX.
+    Flags Generation 1 VMs as candidates for migration to Generation 2, along
+    with their disk format(s) (VHD/VHDX), since Generation 2 only accepts VHDX.
+    Read-only.
 .PARAMETER VMName
-    Filtre de nom de VM (supporte les wildcards). Par defaut : toutes les VM.
+    VM name filter (wildcards supported). Default: all VMs.
 .EXAMPLE
     .\Get-VMGenerationReport.ps1
 #>
 [CmdletBinding()]
 param(
+    [ValidateNotNullOrEmpty()]
     [string]$VMName = "*"
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 if (-not (Get-Module -ListAvailable -Name Hyper-V)) {
-    throw "Le module PowerShell Hyper-V est requis sur cette machine (Install-WindowsFeature RSAT-Hyper-V-Tools ou executer localement sur l'hote)."
+    throw "The Hyper-V PowerShell module is required on this machine (Install-WindowsFeature RSAT-Hyper-V-Tools, or run locally on the host)."
 }
 Import-Module Hyper-V -ErrorAction Stop
 
-$vms = Get-VM -Name $VMName
+$vms = Get-VM -Name $VMName -ErrorAction Stop
 if (-not $vms) {
-    Write-Warning "Aucune VM ne correspond au filtre '$VMName'."
+    Write-Warning "No VM matches the filter '$VMName'."
     return
 }
 
@@ -34,13 +36,13 @@ $report = foreach ($vm in $vms) {
     $needsVhdxConversion = ($vm.Generation -eq 1) -and ($diskFormats -contains 'VHD')
 
     [pscustomobject]@{
-        Name                  = $vm.Name
-        Generation            = $vm.Generation
-        State                 = $vm.State
-        DiskFormats           = ($diskFormats -join ', ')
-        DiskCount             = $disks.Count
-        RequiresVhdxConvert   = $needsVhdxConversion
-        MigrationCandidate    = ($vm.Generation -eq 1)
+        Name                = $vm.Name
+        Generation          = $vm.Generation
+        State               = $vm.State
+        DiskFormats         = ($diskFormats -join ', ')
+        DiskCount           = $disks.Count
+        RequiresVhdxConvert = $needsVhdxConversion
+        MigrationCandidate  = ($vm.Generation -eq 1)
     }
 }
 
@@ -48,8 +50,8 @@ $report | Sort-Object Name | Format-Table -AutoSize
 
 $gen1Count = ($report | Where-Object { $_.Generation -eq 1 }).Count
 $vhdCount = ($report | Where-Object { $_.RequiresVhdxConvert }).Count
-Write-Host "`n$gen1Count VM(s) en Generation 1 sur $($report.Count) analysee(s)." -ForegroundColor Cyan
+Write-Host "`n$gen1Count of $($report.Count) analyzed VM(s) are Generation 1." -ForegroundColor Cyan
 if ($vhdCount -gt 0) {
-    Write-Host "$vhdCount VM(s) necessitent une conversion VHD -> VHDX avant migration (Convert-VHD)." -ForegroundColor Yellow
+    Write-Host "$vhdCount VM(s) require a VHD -> VHDX conversion before migration (Convert-VHD)." -ForegroundColor Yellow
 }
-Write-Host "`nRappel : avant Convert-Gen1ToGen2.ps1, chaque VM Gen 1 candidate doit d'abord avoir son disque invite converti MBR->GPT (scripts/windows ou scripts/linux)." -ForegroundColor Cyan
+Write-Host "`nReminder: before running Convert-Gen1ToGen2.ps1, each candidate Gen 1 VM must first have its guest disk converted from MBR to GPT (scripts/windows or scripts/linux)." -ForegroundColor Cyan

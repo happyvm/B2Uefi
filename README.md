@@ -1,58 +1,77 @@
 # B2Uefi
 
-Documentation et scripts pour migrer des machines virtuelles **BIOS → UEFI**, sur **VMware (ESXi/vSphere)** et **Hyper-V**, pour des invités **Windows** et **Linux**.
+Documentation and scripts to migrate virtual machines from **BIOS to UEFI**, on **VMware (ESXi/vSphere)** and **Hyper-V**, for **Windows** and **Linux** guests.
 
-## Démarrage rapide
+## Quick start
 
-1. Lire [docs/00-overview.md](docs/00-overview.md) pour comprendre le principe général (conversion invité vs bascule firmware hyperviseur).
-2. Suivre la checklist de [docs/01-prerequisites.md](docs/01-prerequisites.md) (sauvegarde, éligibilité).
-3. Convertir l'OS invité :
-   - Windows : [docs/02-windows-guide.md](docs/02-windows-guide.md)
-   - Linux : [docs/03-linux-guide.md](docs/03-linux-guide.md)
-4. Basculer le firmware côté hyperviseur :
-   - VMware : [docs/04-vmware-guide.md](docs/04-vmware-guide.md)
-   - Hyper-V : [docs/05-hyperv-guide.md](docs/05-hyperv-guide.md)
-5. En cas de problème : [docs/06-troubleshooting-rollback.md](docs/06-troubleshooting-rollback.md)
+1. Read [docs/00-overview.md](docs/00-overview.md) to understand the overall principle (guest OS conversion vs. hypervisor firmware switch).
+2. Follow the checklist in [docs/01-prerequisites.md](docs/01-prerequisites.md) (backup, eligibility).
+3. Convert the guest OS:
+   - Windows: [docs/02-windows-guide.md](docs/02-windows-guide.md)
+   - Linux: [docs/03-linux-guide.md](docs/03-linux-guide.md)
+4. Switch the firmware on the hypervisor side:
+   - VMware: [docs/04-vmware-guide.md](docs/04-vmware-guide.md)
+   - Hyper-V: [docs/05-hyperv-guide.md](docs/05-hyperv-guide.md)
+5. If something goes wrong: [docs/06-troubleshooting-rollback.md](docs/06-troubleshooting-rollback.md)
 
-## Structure du dépôt
+## Repository layout
 
 ```
 docs/
-  00-overview.md                  Vue d'ensemble et ordre des opérations
-  01-prerequisites.md             Checklist avant migration
-  02-windows-guide.md             Conversion invité Windows (MBR2GPT)
-  03-linux-guide.md               Conversion invité Linux (sgdisk + GRUB-EFI)
-  04-vmware-guide.md              Bascule firmware VMware (BIOS -> EFI)
-  05-hyperv-guide.md              Migration Hyper-V Generation 1 -> Generation 2
-  06-troubleshooting-rollback.md  Dépannage et retour arrière
+  00-overview.md                  Overview and correct order of operations
+  01-prerequisites.md             Pre-migration checklist
+  02-windows-guide.md             Windows guest conversion (MBR2GPT)
+  03-linux-guide.md               Linux guest conversion (sgdisk + GRUB-EFI)
+  04-vmware-guide.md              VMware firmware switch (BIOS -> EFI)
+  05-hyperv-guide.md              Hyper-V Generation 1 -> Generation 2 migration
+  06-troubleshooting-rollback.md  Troubleshooting and rollback
 
 scripts/
   windows/
-    Test-UefiReadiness.ps1        Audit d'éligibilité (build, TPM, MBR2GPT /validate)
-    Convert-WindowsToUefi.ps1     Conversion MBR -> GPT (wrapper MBR2GPT)
+    Test-UefiReadiness.ps1        Eligibility audit (build, TPM, MBR2GPT /validate)
+    Convert-WindowsToUefi.ps1     MBR -> GPT conversion (MBR2GPT wrapper)
   linux/
-    check-uefi-readiness.sh       Audit d'éligibilité (table de partitions, espace libre, paquets)
-    convert-linux-to-uefi.sh      Conversion MBR -> GPT + GRUB-EFI (dry-run par défaut)
+    check-uefi-readiness.sh       Eligibility audit (partition table, free space, packages)
+    convert-linux-to-uefi.sh      MBR -> GPT conversion + GRUB-EFI (dry-run by default)
   vmware/
-    Get-VMFirmwareReport.ps1      Audit du firmware des VM (PowerCLI)
-    Set-VMFirmware.ps1            Bascule BIOS <-> EFI sur une VM existante (PowerCLI)
+    Get-VMFirmwareReport.ps1      Firmware audit for VMs (PowerCLI)
+    Set-VMFirmware.ps1            BIOS <-> EFI switch on an existing VM (PowerCLI)
+  PSScriptAnalyzerSettings.psd1   Shared PSScriptAnalyzer settings (see "Linting" below)
   hyperv/
-    Get-VMGenerationReport.ps1    Audit des VM Generation 1/2
-    Convert-Gen1ToGen2.ps1        Migration automatisée Gen 1 -> Gen 2
+    Get-VMGenerationReport.ps1    Generation 1/2 audit
+    Convert-Gen1ToGen2.ps1        Automated Generation 1 -> Generation 2 migration
+
+.github/workflows/
+  lint.yml                        CI: ShellCheck + PSScriptAnalyzer on every push/PR
 ```
 
-## Points clés à retenir
+## Key points to remember
 
-- **VMware** : le firmware se bascule sur une VM existante (simple paramètre). **Hyper-V** : impossible en place, il faut recréer une VM Generation 2 et y rattacher le disque converti.
-- Dans tous les cas, l'OS invité doit être converti en GPT avec un bootloader UEFI **avant** de basculer le firmware côté hyperviseur, jamais après.
-- Tous les scripts destructifs (`convert-linux-to-uefi.sh`, conversions de disque) fonctionnent en simulation par défaut ou exposent `-WhatIf`/`--confirm` — toujours tester en environnement non critique en premier.
-- Aucun script ne supprime automatiquement une VM ou un disque d'origine : le nettoyage final reste une action manuelle, après validation.
+- **VMware**: firmware can be switched on an existing VM (a simple config parameter). **Hyper-V**: not possible in place — you must create a new Generation 2 VM and attach the converted disk to it.
+- In every case, the guest OS must be converted to GPT with a UEFI bootloader **before** switching the firmware on the hypervisor side, never after.
+- Every destructive script (`convert-linux-to-uefi.sh`, disk conversions) runs in simulation mode by default or exposes `-WhatIf`/`--confirm` — always test in a non-critical environment first.
+- No script automatically deletes an original VM or disk: final cleanup is always a manual, deliberate action after validation.
 
-## Prérequis généraux
+## General prerequisites
 
-- Accès administrateur sur les VM invitées.
-- PowerCLI (`Install-Module VMware.PowerCLI`) pour les scripts `scripts/vmware/`.
-- Module PowerShell Hyper-V pour les scripts `scripts/hyperv/`.
-- `gdisk`/`gptfdisk` et les droits root pour les scripts `scripts/linux/` (installés automatiquement si absents).
+- Administrator access on the guest VMs.
+- PowerCLI (`Install-Module VMware.PowerCLI`) for the `scripts/vmware/` scripts.
+- The Hyper-V PowerShell module for the `scripts/hyperv/` scripts.
+- `gdisk`/`gptfdisk` and root privileges for the `scripts/linux/` scripts (installed automatically if missing).
 
-Voir [docs/01-prerequisites.md](docs/01-prerequisites.md) pour le détail complet.
+See [docs/01-prerequisites.md](docs/01-prerequisites.md) for full details.
+
+## Linting
+
+Every script is checked in CI on each push/PR (see `.github/workflows/lint.yml`): a bash syntax check, ShellCheck, a PowerShell parser check, and PSScriptAnalyzer. To run the same checks locally:
+
+```bash
+# Bash: syntax + ShellCheck
+bash -n scripts/linux/*.sh
+shellcheck scripts/linux/*.sh
+
+# PowerShell: PSScriptAnalyzer (requires PowerShell 7+ and the PSScriptAnalyzer module)
+# scripts/PSScriptAnalyzerSettings.psd1 documents the two rules deliberately excluded
+# (Write-Host for interactive output, and PowerCLI's own $global:DefaultVIServers).
+pwsh -NoProfile -Command "Install-Module PSScriptAnalyzer -Scope CurrentUser -Force; Invoke-ScriptAnalyzer -Path scripts -Recurse -Settings scripts/PSScriptAnalyzerSettings.psd1"
+```

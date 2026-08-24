@@ -1,56 +1,56 @@
-# Prérequis et checklist avant migration
+# Prerequisites and pre-migration checklist
 
-## 1. Sauvegarde
+## 1. Backup
 
-- **Snapshot VMware** ou **checkpoint Hyper-V** de la VM avant toute opération, en plus d'une sauvegarde applicative classique (Veeam, etc.).
-- Sur l'invité, exporter la table de partitions actuelle :
-  - Linux : `sgdisk --backup=/root/partition-table.backup /dev/sda` (fonctionne aussi en source MBR)
-  - Windows : `mbr2gpt /validate` génère déjà un rapport ; conserver aussi une image système (`wbadmin` ou équivalent) avant conversion.
-- Ne jamais lancer la conversion sans pouvoir revenir en arrière (snapshot + backup applicatif).
+- **VMware snapshot** or **Hyper-V checkpoint** of the VM before any operation, in addition to a regular application-level backup (Veeam, etc.).
+- On the guest, export the current partition table:
+  - Linux: `sgdisk --backup=/root/partition-table.backup /dev/sda` (also works on an MBR source)
+  - Windows: `mbr2gpt /validate` already produces a report; also keep a system image (`wbadmin` or equivalent) before conversion.
+- Never start the conversion without a way back (snapshot + validated application backup).
 
-## 2. Compatibilité du système d'exploitation invité
+## 2. Guest OS compatibility
 
-| OS | Version minimale supportée pour conversion en place | Outil |
+| OS | Minimum version supported for in-place conversion | Tool |
 |---|---|---|
-| Windows | Windows 10 1703+ / Windows Server 2012 R2+ (build ≥ 15063 pour l'outil natif) | `MBR2GPT.exe` |
-| Linux | Noyau avec support EFI (quasi toutes les distributions depuis 2015), `gdisk`/`sgdisk` (paquet `gdisk`/`gptfdisk`), paquet `grub-efi-amd64`/`grub2-efi-x64` disponible | `sgdisk` + `grub-install` |
+| Windows | Windows 10 1703+ / Windows Server 2012 R2+ (build ≥ 15063 for the native tool) | `MBR2GPT.exe` |
+| Linux | Kernel with EFI support (virtually every distribution since 2015), `gdisk`/`sgdisk` (`gdisk`/`gptfdisk` package), `grub-efi-amd64`/`grub2-efi-x64` package available | `sgdisk` + `grub-install` |
 
-- Architecture x86_64 obligatoire (le 32 bits UEFI existe mais n'est pas couvert par ces scripts).
-- Windows Server 2008 R2 / Windows 7 et antérieurs : **pas d'outil natif**, migration hors périmètre de ce dépôt (nécessite une réinstallation ou un outil tiers).
+- x86_64 architecture required (32-bit UEFI exists but is out of scope for these scripts).
+- Windows Server 2008 R2 / Windows 7 and earlier: **no native tool**, migration out of scope for this repository (requires a reinstall or a third-party tool).
 
-## 3. Disque système
+## 3. System disk
 
-- Un seul disque système par migration (ne pas convertir un disque de données seul si l'OS ne boote pas dessus).
-- **Windows** : `MBR2GPT` exige au maximum 3 partitions primaires visibles + de l'espace libre non alloué (~ quelques dizaines de Mo) pour créer les nouvelles partitions système EFI/MSR. Pas de volume RAID logiciel sur le disque système.
-- **Linux** : espace libre disponible pour créer une partition EFI System Partition (ESP, ≥ 100 Mo, idéalement 512 Mo, formatée FAT32) — soit de l'espace non alloué en fin de disque, soit une partition à réduire.
-- Pas de disque chiffré au niveau bloc avant conversion (BitLocker doit être **suspendu**, `luksOpen`/dm-crypt doit être pris en compte séparément — hors script).
+- One system disk per migration (do not convert a data disk on its own if the OS doesn't boot from it).
+- **Windows**: `MBR2GPT` requires at most 3 visible primary partitions plus some unallocated free space (a few dozen MB) to create the new EFI/MSR system partitions. No software RAID volume on the system disk.
+- **Linux**: free space available to create an EFI System Partition (ESP, ≥ 100 MB, ideally 512 MB, FAT32-formatted) — either unallocated space at the end of the disk, or a partition to shrink.
+- No block-level encryption before conversion (BitLocker must be **suspended**, `luksOpen`/dm-crypt must be handled separately — out of scope for these scripts).
 
-## 4. Côté hyperviseur
+## 4. Hypervisor side
 
 ### VMware
-- VM **hardware version ≥ 13** pour Secure Boot (EFI seul fonctionne dès la version 7, mais restez sur une version récente supportée).
-- Droits vSphere : `VirtualMachine.Config.Settings` sur la VM.
-- PowerCLI installé (`Install-Module VMware.PowerCLI`) si vous utilisez les scripts fournis.
+- VM **hardware version ≥ 13** for Secure Boot (EFI alone works from version 7, but stay on a recent supported version).
+- vSphere permission: `VirtualMachine.Config.Settings` on the VM.
+- PowerCLI installed (`Install-Module VMware.PowerCLI`) if you use the provided scripts.
 
 ### Hyper-V
-- Hyper-V sur Windows Server 2012 R2+ / Windows 10+ (Generation 2 requiert ces versions minimum côté hôte).
-- Espace disque suffisant pour dupliquer/déplacer le VHDX pendant la migration (la VM Gen 1 d'origine doit être conservée intacte jusqu'à validation du démarrage de la nouvelle VM Gen 2).
-- Le disque doit être au format **VHDX** (Gen 2 ne supporte pas VHD) ; convertir avec `Convert-VHD` si nécessaire.
+- Hyper-V on Windows Server 2012 R2+ / Windows 10+ (Generation 2 requires these minimum host versions).
+- Enough disk space to duplicate/move the VHDX during migration (the original Gen 1 VM must be kept intact until the new Gen 2 VM's boot is validated).
+- The disk must be in **VHDX** format (Gen 2 does not support VHD); convert with `Convert-VHD` if needed.
 
-## 5. Fenêtre de maintenance
+## 5. Maintenance window
 
-Compter un arrêt de service pendant :
-1. La conversion du disque (peut se faire OS démarré, sans coupure, pour Windows comme pour Linux).
-2. L'arrêt de la VM, le basculement firmware (VMware) ou la recréation Gen 2 (Hyper-V), et le redémarrage — **c'est cette étape qui coupe le service**.
+Plan for a service interruption during:
+1. Disk conversion (can be done while the OS is running, without downtime, for both Windows and Linux).
+2. Shutting down the VM, switching the firmware (VMware) or recreating it in Gen 2 (Hyper-V), and rebooting — **this step is what actually causes the outage**.
 
-## Checklist synthétique
+## Summary checklist
 
-- [ ] Snapshot/checkpoint pris
-- [ ] Sauvegarde applicative validée et restaurable
-- [ ] BitLocker suspendu (si applicable)
-- [ ] Rapport de compatibilité généré (`Test-UefiReadiness.ps1` / `check-uefi-readiness.sh`) sans erreur bloquante
-- [ ] Espace libre confirmé sur le disque système
-- [ ] Fenêtre de maintenance planifiée
-- [ ] Procédure de rollback relue ([06-troubleshooting-rollback.md](06-troubleshooting-rollback.md))
+- [ ] Snapshot/checkpoint taken
+- [ ] Application backup validated and restorable
+- [ ] BitLocker suspended (if applicable)
+- [ ] Compatibility report generated (`Test-UefiReadiness.ps1` / `check-uefi-readiness.sh`) with no blocking error
+- [ ] Free space confirmed on the system disk
+- [ ] Maintenance window scheduled
+- [ ] Rollback procedure reviewed ([06-troubleshooting-rollback.md](06-troubleshooting-rollback.md))
 
-Suite : [02-windows-guide.md](02-windows-guide.md) · [03-linux-guide.md](03-linux-guide.md)
+Next: [02-windows-guide.md](02-windows-guide.md) · [03-linux-guide.md](03-linux-guide.md)

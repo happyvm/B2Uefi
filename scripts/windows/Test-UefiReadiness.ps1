@@ -1,107 +1,121 @@
 <#
 .SYNOPSIS
-    Verifie si le disque systeme Windows est eligible a une conversion MBR -> GPT/UEFI.
+    Checks whether the Windows system disk is eligible for MBR -> GPT/UEFI conversion.
 .DESCRIPTION
-    Controle la version de build Windows, le style de partition actuel, le nombre de
-    partitions, le TPM et l'etat Secure Boot, puis execute "mbr2gpt /validate".
+    Checks the Windows build number, current partition style, partition count,
+    TPM, and Secure Boot state, then runs "mbr2gpt /validate". Read-only: this
+    script makes no changes to the system.
 .PARAMETER DiskNumber
-    Numero du disque a valider (par defaut : disque systeme, disque 0).
+    Number of the disk to validate (default: system disk, disk 0).
 .EXAMPLE
     .\Test-UefiReadiness.ps1 -DiskNumber 0
 #>
 [CmdletBinding()]
 param(
+    [ValidateRange(0, [int]::MaxValue)]
     [int]$DiskNumber = 0
 )
 
+Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 $results = [ordered]@{}
 
 function Add-Result {
-    param([string]$Check, [string]$Status, [string]$Detail)
+    param(
+        [Parameter(Mandatory)][string]$Check,
+        [Parameter(Mandatory)][ValidateSet('OK', 'INFO', 'WARNING', 'FAIL')][string]$Status,
+        [Parameter(Mandatory)][string]$Detail
+    )
     $results[$Check] = [pscustomobject]@{ Status = $Status; Detail = $Detail }
 }
 
-if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Warning "Ce script doit etre execute en tant qu'administrateur pour des resultats fiables (mbr2gpt, Get-Tpm)."
+$currentPrincipal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+    Write-Warning "This script should be run as Administrator for reliable results (mbr2gpt, Get-Tpm)."
 }
 
 $build = [System.Environment]::OSVersion.Version.Build
 if ($build -ge 15063) {
-    Add-Result -Check 'Build Windows' -Status 'OK' -Detail "Build $build (>= 15063 requis pour MBR2GPT natif)"
+    Add-Result -Check 'Windows build' -Status 'OK' -Detail "Build $build (>= 15063 required for native MBR2GPT)"
 } else {
-    Add-Result -Check 'Build Windows' -Status 'ECHEC' -Detail "Build $build trop ancien, MBR2GPT natif indisponible"
+    Add-Result -Check 'Windows build' -Status 'FAIL' -Detail "Build $build is too old, native MBR2GPT is unavailable"
 }
 
 try {
-    $disk = Get-Disk -Number $DiskNumber
-    Add-Result -Check 'Style de partition' -Status ($(if ($disk.PartitionStyle -eq 'MBR') {'OK'} else {'INFO'})) `
-        -Detail "Disque $DiskNumber actuellement en $($disk.PartitionStyle)"
+    $disk = Get-Disk -Number $DiskNumber -ErrorAction Stop
+    $partStatus = if ($disk.PartitionStyle -eq 'MBR') { 'OK' } else { 'INFO' }
+    Add-Result -Check 'Partition style' -Status $partStatus -Detail "Disk $DiskNumber is currently $($disk.PartitionStyle)"
 
-    $partCount = (Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue | Where-Object { $_.Type -ne 'Reserved' }).Count
+    $partCount = (Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue |
+        Where-Object { $_.Type -ne 'Reserved' }).Count
     if ($partCount -le 3) {
-        Add-Result -Check 'Nombre de partitions' -Status 'OK' -Detail "$partCount partition(s) detectee(s) (limite : 3 pour MBR2GPT)"
+        Add-Result -Check 'Partition count' -Status 'OK' -Detail "$partCount partition(s) detected (MBR2GPT limit: 3)"
     } else {
-        Add-Result -Check 'Nombre de partitions' -Status 'ECHEC' -Detail "$partCount partitions detectees, MBR2GPT exige au maximum 3"
+        Add-Result -Check 'Partition count' -Status 'FAIL' -Detail "$partCount partitions detected, MBR2GPT allows at most 3"
     }
 } catch {
-    Add-Result -Check 'Style de partition' -Status 'ERREUR' -Detail $_.Exception.Message
+    Add-Result -Check 'Partition style' -Status 'FAIL' -Detail "Could not read disk ${DiskNumber}: $($_.Exception.Message)"
 }
 
 try {
     $tpm = Get-Tpm -ErrorAction Stop
     if ($tpm.TpmPresent -and $tpm.TpmReady) {
-        Add-Result -Check 'TPM' -Status 'OK' -Detail "TPM present et pret (requis pour Secure Boot / Windows 11 / BitLocker)"
+        Add-Result -Check 'TPM' -Status 'OK' -Detail "TPM present and ready (required for Secure Boot / Windows 11 / BitLocker)"
     } else {
-        Add-Result -Check 'TPM' -Status 'INFO' -Detail "TPM absent ou non pret - a activer cote hyperviseur si Secure Boot est vise"
+        Add-Result -Check 'TPM' -Status 'INFO' -Detail "TPM absent or not ready - enable it on the hypervisor side if Secure Boot is planned"
     }
 } catch {
-    Add-Result -Check 'TPM' -Status 'INFO' -Detail "Impossible d'interroger le TPM (Get-Tpm indisponible sur ce systeme)"
+    Add-Result -Check 'TPM' -Status 'INFO' -Detail "Unable to query the TPM (Get-Tpm unavailable on this system)"
 }
 
 try {
     $secureBoot = Confirm-SecureBootUEFI -ErrorAction Stop
-    Add-Result -Check 'Secure Boot' -Status 'INFO' -Detail "Secure Boot actuellement : $secureBoot"
+    Add-Result -Check 'Secure Boot' -Status 'INFO' -Detail "Secure Boot is currently: $secureBoot"
 } catch {
-    Add-Result -Check 'Secure Boot' -Status 'INFO' -Detail "Firmware BIOS actuel : Secure Boot non applicable avant bascule UEFI"
+    Add-Result -Check 'Secure Boot' -Status 'INFO' -Detail "Current firmware is BIOS: Secure Boot not applicable before switching to UEFI"
 }
 
 try {
     $bitlocker = Get-BitLockerVolume -MountPoint 'C:' -ErrorAction Stop
     if ($bitlocker.ProtectionStatus -eq 'On') {
-        Add-Result -Check 'BitLocker' -Status 'ATTENTION' -Detail "BitLocker actif sur C: - a suspendre avant conversion (Suspend-BitLocker -MountPoint 'C:')"
+        Add-Result -Check 'BitLocker' -Status 'WARNING' -Detail "BitLocker is active on C: - suspend it before conversion (Suspend-BitLocker -MountPoint 'C:')"
     } else {
-        Add-Result -Check 'BitLocker' -Status 'OK' -Detail "BitLocker inactif ou deja suspendu sur C:"
+        Add-Result -Check 'BitLocker' -Status 'OK' -Detail "BitLocker is inactive or already suspended on C:"
     }
 } catch {
-    Add-Result -Check 'BitLocker' -Status 'INFO' -Detail "Module BitLocker indisponible ou volume non protege"
+    Add-Result -Check 'BitLocker' -Status 'INFO' -Detail "BitLocker module unavailable or volume not protected"
 }
 
-Write-Host "`n=== Validation MBR2GPT (disque $DiskNumber) ===" -ForegroundColor Cyan
-$mbr2gptOutput = & "$env:WINDIR\System32\mbr2gpt.exe" /validate /disk:$DiskNumber /allowFullOS 2>&1
-$mbr2gptOutput | ForEach-Object { Write-Host $_ }
-if ($LASTEXITCODE -eq 0) {
-    Add-Result -Check 'MBR2GPT /validate' -Status 'OK' -Detail 'Validation reussie'
-} else {
-    Add-Result -Check 'MBR2GPT /validate' -Status 'ECHEC' -Detail "Code de sortie $LASTEXITCODE - voir le journal ci-dessus"
-}
-
-Write-Host "`n=== Rapport de compatibilite BIOS -> UEFI ===" -ForegroundColor Cyan
-$results.GetEnumerator() | ForEach-Object {
-    $color = switch ($_.Value.Status) {
-        'OK'        { 'Green' }
-        'INFO'      { 'Gray' }
-        'ATTENTION' { 'Yellow' }
-        default     { 'Red' }
+$mbr2gpt = Join-Path $env:WINDIR 'System32\mbr2gpt.exe'
+if (Test-Path -LiteralPath $mbr2gpt) {
+    Write-Host "`n=== MBR2GPT validation (disk $DiskNumber) ===" -ForegroundColor Cyan
+    $mbr2gptOutput = & $mbr2gpt /validate /disk:$DiskNumber /allowFullOS 2>&1
+    $mbr2gptOutput | ForEach-Object { Write-Host $_ }
+    if ($LASTEXITCODE -eq 0) {
+        Add-Result -Check 'MBR2GPT /validate' -Status 'OK' -Detail 'Validation succeeded'
+    } else {
+        Add-Result -Check 'MBR2GPT /validate' -Status 'FAIL' -Detail "Exit code $LASTEXITCODE - see log above"
     }
-    Write-Host ("{0,-24} [{1,-9}] {2}" -f $_.Key, $_.Value.Status, $_.Value.Detail) -ForegroundColor $color
+} else {
+    Add-Result -Check 'MBR2GPT /validate' -Status 'FAIL' -Detail "mbr2gpt.exe not found at $mbr2gpt (requires Windows 10 1703+ / Windows Server 2016+)"
 }
 
-$blocking = $results.Values | Where-Object { $_.Status -eq 'ECHEC' }
+Write-Host "`n=== BIOS -> UEFI compatibility report ===" -ForegroundColor Cyan
+foreach ($entry in $results.GetEnumerator()) {
+    $color = switch ($entry.Value.Status) {
+        'OK'      { 'Green' }
+        'INFO'    { 'Gray' }
+        'WARNING' { 'Yellow' }
+        default   { 'Red' }
+    }
+    Write-Host ("{0,-20} [{1,-8}] {2}" -f $entry.Key, $entry.Value.Status, $entry.Value.Detail) -ForegroundColor $color
+}
+
+$blocking = $results.Values | Where-Object { $_.Status -eq 'FAIL' }
 if ($blocking) {
-    Write-Host "`nResultat : NON ELIGIBLE - corriger les points en echec avant de lancer Convert-WindowsToUefi.ps1" -ForegroundColor Red
+    Write-Host "`nResult: NOT ELIGIBLE - fix the failing checks above before running Convert-WindowsToUefi.ps1" -ForegroundColor Red
     exit 1
 } else {
-    Write-Host "`nResultat : ELIGIBLE a la conversion" -ForegroundColor Green
+    Write-Host "`nResult: ELIGIBLE for conversion" -ForegroundColor Green
     exit 0
 }
