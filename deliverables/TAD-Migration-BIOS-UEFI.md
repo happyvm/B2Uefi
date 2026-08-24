@@ -43,6 +43,9 @@ numbersections: true
 | R7 | Microsoft Learn — Credential Guard overview and requirements |
 | R8 | Microsoft Learn — What is Secured-core server for Windows Server |
 | R9 | Microsoft Learn — Hyper-V Generation 2 virtual machine security features |
+| R10 | Red Hat Documentation — Signing a kernel and modules for Secure Boot |
+| R11 | Red Hat Customer Portal — Kernel lockdown behaviour under Secure Boot |
+| R12 | Red Hat Documentation — Automatic unlocking of LUKS volumes with Clevis and TPM 2.0 |
 
 # Purpose and scope
 
@@ -298,6 +301,62 @@ RHEL 6 ships `efibootmgr` and its installer can operate in UEFI mode: on paper, 
 ### Special case of RHEL 7
 
 RHEL 7 is technically convertible but has been out of full support since June 2024. Converting this estate buys a UEFI boot on a system that will have to be replaced anyway. **Recommendation: fold the UEFI switch into the upgrade to RHEL 8 or 9 rather than performing the operation twice.**
+
+## What each RHEL version actually gains
+
+The same two-stage reading applies as for Windows: **UEFI on its own** removes structural limits, and **UEFI plus Secure Boot** opens a security feature set whose contents depend on the version.
+
+The mechanism differs from Windows in an important way. Windows exposes Secure Boot benefits through a set of named, separately-enabled products (VBS, HVCI, Credential Guard). RHEL concentrates them into a single kernel behaviour: **when the kernel boots with Secure Boot active, it automatically enters *lockdown* mode**. Nothing has to be enabled — the protection is a consequence of the boot mode. This makes the security gain on Linux more immediate than on Windows, and also less visible, which is why it is worth stating explicitly to stakeholders.
+
+| Version | Gained with UEFI alone | Additionally gained with UEFI + Secure Boot |
+|---|---|---|
+| **RHEL 5 / 6** | — no supported migration path — | — |
+| **RHEL 7** | System disk > 2 TB (GPT); Hyper-V Generation 2 VM; faster boot | Signed boot chain via `shim-x64`; **kernel module signature enforcement** (unsigned modules refuse to load). No formal lockdown LSM. |
+| **RHEL 8** | Same as above | Everything above, plus **automatic kernel lockdown mode**, the `.platform` and `.machine` keyrings (allowing signed third-party modules under lockdown), and **TPM 2.0-sealed LUKS unlocking via Clevis**. |
+| **RHEL 9** | Same as above | Same set as RHEL 8, plus Secure Boot as a building block for **confidential virtual machines** (AMD SEV-SNP, Intel TDX), where the trusted boot chain is a precondition. |
+| **RHEL 10** | Same as above | Same set as RHEL 9, with module signing reinforced and the wider cryptographic modernisation of the release (OpenSSH 9.9, SELinux 3.8, post-quantum algorithms as a technology preview). |
+
+### What kernel lockdown actually does
+
+This is the concrete return on enabling Secure Boot on a RHEL guest, and the item most worth citing in a security review:
+
+| Effect | Consequence |
+|---|---|
+| Only modules signed by a trusted key load | Blocks the classic "load a malicious kernel module" path used for rootkits |
+| Direct access to kernel memory is restricted | `/dev/mem`, `/dev/kmem` and equivalents are no longer usable to read or patch the running kernel |
+| Unsigned `kexec` is refused | Prevents booting an unverified kernel from a running one, bypassing the whole chain of trust |
+| Extraction of secrets from kernel space is restricted | Reduces the impact of a compromised root account on the confidentiality of key material |
+
+Red Hat kernel modules are signed at build time with an ephemeral key whose private half is discarded, so no third party can produce a module signed by it. Third-party modules — storage, backup agents, network drivers — must be signed and their key enrolled through MOK, or they will not load.
+
+> **Operational consequence to anticipate.** This is the main Linux-side compatibility risk of the migration. Any out-of-tree kernel module in the estate (proprietary storage drivers, some backup and antivirus agents, certain monitoring tools) must be signed and enrolled before Secure Boot is enabled, or the service it supports will fail after reboot. This must be surveyed during the inventory phase, not discovered during the maintenance window.
+
+### Minimum version per capability
+
+| Capability | Minimum RHEL | Requires UEFI | Requires Secure Boot | Requires TPM 2.0 |
+|---|---|---|---|---|
+| System disk > 2 TB (GPT) | Any | Yes | No | No |
+| Hyper-V Generation 2 guest | 7.0 | Yes | No | No |
+| Signed boot chain (`shim`) | 7 | Yes | Yes | No |
+| Kernel module signature enforcement | 7 | Yes | Yes | No |
+| Automatic kernel lockdown | 8 | Yes | Yes | No |
+| `.machine` keyring / signed third-party modules | 8 | Yes | Yes | No |
+| LUKS unlocking sealed to TPM (Clevis) | 8 | Yes | Recommended | Yes |
+| Confidential VM (SEV-SNP, TDX) | 9 | Yes | Yes | Yes |
+
+### Comparison with the Windows path
+
+| Aspect | Windows Server | RHEL |
+|---|---|---|
+| Security gain activation | Explicit: each feature enabled separately (GPO, roles) | **Implicit**: lockdown follows automatically from Secure Boot |
+| Security inflection version | 2016 (arrival of VBS / Credential Guard) | **8** (arrival of the lockdown LSM) |
+| Hypervisor dependency | Strong: VBS and Credential Guard require vTPM and nested virtualization | **Weak**: lockdown requires nothing from the hypervisor beyond UEFI and Secure Boot |
+| Main compatibility risk | Nested virtualization vs. third-party agents | **Unsigned out-of-tree kernel modules** |
+| Disk encryption tied to boot state | BitLocker sealed to Secure Boot | LUKS sealed to TPM PCR 7 via Clevis |
+
+The practical consequence is that **the RHEL estate obtains its security return faster and at lower infrastructure cost** than the Windows estate: no vTPM, no nested virtualization, no hardware-version upgrade is needed to benefit from lockdown. The condition to satisfy is different in nature — it is a driver-signing inventory question, not an infrastructure one.
+
+> **Point to verify before committing.** LUKS unlocking sealed to TPM PCR 7 binds decryption to the Secure Boot state. Any legitimate change to that state — firmware update, certificate rollover, Secure Boot key change — invalidates the seal and requires the recovery passphrase. Given the Secure Boot certificate expiries expected during 2026, this dependency must be documented and the recovery passphrases verified as available before this mechanism is deployed at scale.
 
 # Security
 
