@@ -15,11 +15,11 @@ numbersections: true
 | Item | Value |
 |---|---|
 | Title | Operations Runbook — BIOS to UEFI Migration |
-| Reference | DEX-B2UEFI-001 |
+| Reference | OPS-B2UEFI-001 |
 | Version | 1.0 |
 | Status | Pending approval |
 | Classification | Internal |
-| Related architecture document | DAT-B2UEFI-001 |
+| Related architecture document | TAD-B2UEFI-001 |
 | Intended audience | System and virtualization operators, L2/L3 on-call |
 | Author | *(to be completed)* |
 | Operations reviewer | *(to be completed)* |

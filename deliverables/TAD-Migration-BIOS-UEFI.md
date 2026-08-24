@@ -15,7 +15,7 @@ numbersections: true
 | Item | Value |
 |---|---|
 | Title | Technical Architecture Document — BIOS to UEFI Migration |
-| Reference | DAT-B2UEFI-001 |
+| Reference | TAD-B2UEFI-001 |
 | Version | 1.0 |
 | Status | Pending approval |
 | Classification | Internal |

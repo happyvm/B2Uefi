@@ -4,10 +4,10 @@ Stakeholder documents derived from this repository, designed to be converted to 
 
 | File | Document | Audience |
 |---|---|---|
-| `DAT-Migration-BIOS-UEFI.md` | Technical Architecture Document | Architects, technical validation, project governance |
-| `DEX-Migration-BIOS-UEFI.md` | Operations Runbook | Operators, L2/L3 on-call |
+| `TAD-Migration-BIOS-UEFI.md` | Technical Architecture Document | Architects, technical validation, project governance |
+| `OPS-Migration-BIOS-UEFI.md` | Operations Runbook | Operators, L2/L3 on-call |
 
-The `DAT-` and `DEX-` filename prefixes and the `DAT-B2UEFI-001` / `DEX-B2UEFI-001` reference codes are kept as stable document identifiers.
+Each document carries a stable reference code in its header table — `TAD-B2UEFI-001` and `OPS-B2UEFI-001` — and the runbook cites the architecture document by that code. Keep the codes and the filename prefixes aligned if you rename anything.
 
 ## Why these are separate from `docs/`
 
@@ -25,7 +25,7 @@ Both files are plain Markdown with YAML front matter. No LaTeX, no HTML, no diag
 ### With pandoc (recommended)
 
 ```bash
-pandoc DAT-Migration-BIOS-UEFI.md -o DAT-Migration-BIOS-UEFI.docx \
+pandoc TAD-Migration-BIOS-UEFI.md -o TAD-Migration-BIOS-UEFI.docx \
   --toc --toc-depth=3 --number-sections
 ```
 
@@ -41,7 +41,7 @@ Pandoc drops LaTeX `\newpage` when producing Word, so these documents do not use
 pandoc --print-default-data-file reference.docx > reference.docx
 # Open reference.docx in Word -> Styles -> Heading 1 -> Modify
 #   -> Format -> Paragraph -> Line and Page Breaks -> tick "Page break before"
-pandoc DAT-Migration-BIOS-UEFI.md -o DAT.docx --toc --number-sections \
+pandoc TAD-Migration-BIOS-UEFI.md -o TAD.docx --toc --number-sections \
   --reference-doc=reference.docx
 ```
 
