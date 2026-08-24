@@ -1,358 +1,358 @@
 ---
-title: "Dossier d'Architecture Technique"
-subtitle: "Migration BIOS vers UEFI — Environnements VMware et Hyper-V"
-author: "Direction Infrastructure"
+title: "Technical Architecture Document"
+subtitle: "BIOS to UEFI Migration — VMware and Hyper-V Environments"
+author: "Infrastructure Department"
 date: "Version 1.0"
-lang: fr-FR
+lang: en
 toc: true
-toc-title: "Table des matières"
+toc-title: "Table of Contents"
 toc-depth: 3
 numbersections: true
 ---
 
-# Fiche du document
+# Document control
 
-| Rubrique | Valeur |
+| Item | Value |
 |---|---|
-| Titre | Dossier d'Architecture Technique — Migration BIOS vers UEFI |
-| Référence | DAT-B2UEFI-001 |
+| Title | Technical Architecture Document — BIOS to UEFI Migration |
+| Reference | DAT-B2UEFI-001 |
 | Version | 1.0 |
-| Statut | À valider |
-| Classification | Interne |
-| Périmètre | Machines virtuelles VMware (ESXi/vSphere) et Hyper-V, invités Windows et Linux |
-| Rédacteur | *(à compléter)* |
-| Valideur technique | *(à compléter)* |
-| Approbateur | *(à compléter)* |
+| Status | Pending approval |
+| Classification | Internal |
+| Scope | VMware (ESXi/vSphere) and Hyper-V virtual machines, Windows and Linux guests |
+| Author | *(to be completed)* |
+| Technical reviewer | *(to be completed)* |
+| Approver | *(to be completed)* |
 
-## Historique des révisions
+## Revision history
 
-| Version | Date | Auteur | Nature de la modification |
+| Version | Date | Author | Nature of change |
 |---|---|---|---|
-| 1.0 | *(à compléter)* | *(à compléter)* | Création initiale |
+| 1.0 | *(to be completed)* | *(to be completed)* | Initial release |
 
-## Documents de référence
+## Reference documents
 
-| Réf. | Document |
+| Ref. | Document |
 |---|---|
 | R1 | Microsoft Learn — MBR2GPT.exe |
-| R2 | Microsoft Learn — Generation 1 ou 2 sous Hyper-V |
-| R3 | Microsoft Learn — Systèmes invités Windows supportés par Hyper-V |
-| R4 | Red Hat Customer Portal — Cycle de vie Red Hat Enterprise Linux |
-| R5 | Red Hat Customer Portal — UEFI Secure Boot dans RHEL 7 |
-| R6 | Broadcom/VMware — Changement du firmware de démarrage d'une machine virtuelle |
+| R2 | Microsoft Learn — Should I create a generation 1 or 2 virtual machine in Hyper-V? |
+| R3 | Microsoft Learn — Supported Windows guest operating systems for Hyper-V |
+| R4 | Red Hat Customer Portal — Red Hat Enterprise Linux Life Cycle |
+| R5 | Red Hat Customer Portal — UEFI Secure Boot in Red Hat Enterprise Linux 7 |
+| R6 | Broadcom/VMware — Switching virtual machine boot firmware |
 
-# Objet et périmètre
+# Purpose and scope
 
-## Objet
+## Purpose
 
-Ce document décrit l'architecture technique retenue pour migrer le mode de démarrage des machines virtuelles du parc, du **BIOS hérité (legacy)** vers **UEFI**, sur les hyperviseurs VMware et Hyper-V, pour des systèmes invités Windows et Linux.
+This document describes the technical architecture adopted to migrate the boot mode of the virtual machine estate from **legacy BIOS** to **UEFI**, across VMware and Hyper-V hypervisors, for Windows and Linux guest operating systems.
 
-Il définit l'architecture cible, les composants d'automatisation livrés, les contraintes de compatibilité par système d'exploitation, ainsi que les risques identifiés et les mesures associées.
+It defines the target architecture, the automation components delivered, the per-operating-system compatibility constraints, and the identified risks together with their mitigations.
 
-## Périmètre inclus
+## In scope
 
-- Machines virtuelles hébergées sur VMware ESXi/vSphere et Microsoft Hyper-V.
-- Systèmes invités Windows Server et Red Hat Enterprise Linux (et rebuilds compatibles : CentOS, AlmaLinux, Rocky Linux).
-- Architecture x86_64 exclusivement.
-- Machines disposant d'un **disque système unique** avec partitionnement classique.
-- Conversion de la table de partitions MBR vers GPT et reconfiguration du chargeur d'amorçage.
-- Bascule du firmware de la machine virtuelle côté hyperviseur.
+- Virtual machines hosted on VMware ESXi/vSphere and Microsoft Hyper-V.
+- Windows Server and Red Hat Enterprise Linux guests (and the compatible rebuilds: CentOS, AlmaLinux, Rocky Linux).
+- x86_64 architecture exclusively.
+- Machines with a **single system disk** using standard partitioning.
+- Conversion of the partition table from MBR to GPT, and reconfiguration of the boot loader.
+- Switching the virtual machine firmware on the hypervisor side.
 
-## Périmètre exclu
+## Out of scope
 
-Les configurations suivantes sont explicitement hors périmètre. Elles nécessitent une étude et une validation manuelles spécifiques :
+The following configurations are explicitly excluded. They require dedicated study and manual validation:
 
-- Architectures 32 bits (l'UEFI 32 bits existe mais n'est pas traité).
-- Disques système en RAID logiciel.
-- Volumes `/boot` sur LVM ou chiffrés (LUKS), et disques dynamiques Windows.
-- Configurations multi-amorçage.
-- Machines physiques (bare metal).
-- Systèmes d'exploitation hors support éditeur, pour lesquels la reconstruction est préconisée plutôt que la conversion.
+- 32-bit architectures (32-bit UEFI exists but is not addressed).
+- System disks on software RAID.
+- `/boot` volumes on LVM or encrypted (LUKS), and Windows dynamic disks.
+- Multi-boot configurations.
+- Physical machines (bare metal).
+- Operating systems out of vendor support, for which rebuilding is recommended over conversion.
 
-# Contexte et enjeux
+# Context and drivers
 
-## Justification de la migration
+## Justification for the migration
 
-| Enjeu | Description |
+| Driver | Description |
 |---|---|
-| **Sécurité** | Le Secure Boot exige UEFI. Il est prérequis pour Windows 11 et recommandé pour le durcissement des serveurs Linux. Les fonctions Credential Guard, VBS et BitLocker adossé au TPM en dépendent également. |
-| **Conformité éditeur** | Microsoft et les distributions Linux orientent les nouvelles fonctions d'amorçage (measured boot, TPM, shielded VMs) vers UEFI exclusivement. |
-| **Levée de limites techniques** | Le partitionnement MBR plafonne à 2 To et 4 partitions primaires. Le GPT, utilisé par UEFI, supprime ces limites. |
-| **Prérequis de montée de version** | Windows Server 2022 et Windows 11 supposent UEFI + Secure Boot pour bénéficier de l'ensemble des fonctions de sécurité. |
+| **Security** | Secure Boot requires UEFI. It is a prerequisite for Windows 11 and is recommended for hardening Linux servers. Credential Guard, VBS and TPM-backed BitLocker also depend on it. |
+| **Vendor alignment** | Microsoft and the Linux distributions are directing new boot-related features (measured boot, TPM, shielded VMs) exclusively toward UEFI. |
+| **Removal of technical limits** | MBR partitioning is capped at 2 TB and four primary partitions. GPT, used by UEFI, removes both limits. |
+| **Upgrade prerequisite** | Windows Server 2022 and Windows 11 assume UEFI + Secure Boot in order to expose their full security feature set. |
 
-## Fenêtre de contrainte
+## Timing constraint
 
-Deux échéances de support conditionnent le calendrier :
+Two support deadlines govern the schedule:
 
-- **Windows Server 2012 / 2012 R2** : programme ESU arrivant à échéance en **octobre 2026**.
-- **Windows Server 2016** : fin de support étendu en **janvier 2027**.
+- **Windows Server 2012 / 2012 R2**: ESU program ending **October 2026**.
+- **Windows Server 2016**: extended support ending **January 2027**.
 
-Ces deux versions représentent le volume principal des machines encore en BIOS et relèvent d'une procédure de conversion dégradée (voir section « Contrainte majeure : Server 2012 R2 et 2016 »).
+These two versions represent the bulk of the machines still running in BIOS mode, and they fall under a degraded conversion procedure (see "Major constraint: Server 2012 R2 and 2016").
 
-# Architecture cible
+# Target architecture
 
-## Principe fondateur : deux couches indépendantes
+## Founding principle: two independent layers
 
-Une migration BIOS vers UEFI ne constitue pas une opération unique. Elle agit sur **deux couches techniques indépendantes**, qui doivent impérativement être modifiées dans un ordre déterminé.
+A BIOS to UEFI migration is not a single operation. It acts on **two independent technical layers**, which must be modified in a specific order.
 
-| Couche | Objet de la modification | Effectuée par |
+| Layer | What is modified | Performed by |
 |---|---|---|
-| **Couche invité** (guest OS) | Conversion de la table de partitions du disque système de MBR vers GPT, et installation d'un chargeur d'amorçage capable de démarrer en UEFI (`bootmgfw.efi` sous Windows, `grubx64.efi` sous Linux). | Scripts exécutés dans le système invité |
-| **Couche hyperviseur** | Présentation d'un firmware UEFI à la machine virtuelle, en remplacement du BIOS émulé. | Scripts exécutés depuis l'administration de l'hyperviseur |
+| **Guest layer** (guest OS) | Conversion of the system disk partition table from MBR to GPT, and installation of a boot loader capable of starting in UEFI mode (`bootmgfw.efi` on Windows, `grubx64.efi` on Linux). | Scripts executed inside the guest operating system |
+| **Hypervisor layer** | Presenting a UEFI firmware to the virtual machine in place of the emulated BIOS. | Scripts executed from the hypervisor management plane |
 
-## Asymétrie critique
+## Critical asymmetry
 
-Les deux couches sont liées, mais leur inversion produit dans les deux cas une machine non démarrable :
+The two layers are related, but inverting them produces an unbootable machine in both directions:
 
-| Séquence erronée | Conséquence |
+| Incorrect sequence | Consequence |
 |---|---|
-| Disque converti en GPT, firmware laissé en BIOS | Le BIOS hérité ne sait pas amorcer un disque GPT porteur d'une partition système EFI. **La VM ne démarre plus.** |
-| Firmware basculé en UEFI, disque laissé en MBR | Le firmware UEFI recherche une partition FAT32 (ESP) contenant un chargeur `.efi`, absente d'un disque MBR. **La VM ne démarre plus.** |
+| Disk converted to GPT, firmware left on BIOS | Legacy BIOS cannot boot a GPT disk carrying an EFI system partition. **The VM no longer starts.** |
+| Firmware switched to UEFI, disk left on MBR | UEFI firmware looks for a FAT32 partition (ESP) containing an `.efi` loader, which does not exist on an MBR disk. **The VM no longer starts.** |
 
-## Séquence nominale
+## Nominal sequence
 
 ```
-Étape 0 : Prise d'un instantané restaurable (snapshot / checkpoint)
-Étape 1 : Vérification d'éligibilité du système invité
-Étape 2 : Conversion du disque invité (MBR -> GPT + chargeur UEFI)
-          [le système tourne encore en mode BIOS]
-Étape 3 : Arrêt propre de la machine virtuelle
-Étape 4 : Bascule du firmware côté hyperviseur
-Étape 5 : Redémarrage
-Étape 6 : Validation depuis l'intérieur du système invité
-Étape 7 : Retour arrière si la validation échoue
+Step 0 : Take a restorable snapshot / checkpoint
+Step 1 : Verify guest operating system eligibility
+Step 2 : Convert the guest disk (MBR -> GPT + UEFI boot loader)
+         [the system is still running in BIOS mode]
+Step 3 : Cleanly shut down the virtual machine
+Step 4 : Switch the firmware on the hypervisor side
+Step 5 : Reboot
+Step 6 : Validate from inside the guest operating system
+Step 7 : Roll back if validation fails
 ```
 
-Les étapes 0 et 6 ne sont pas facultatives :
+Steps 0 and 6 are not optional:
 
-- **L'étape 0 constitue l'unique voie de retour arrière réelle** une fois le disque converti. Il n'existe pas de conversion automatisée et sûre de GPT vers MBR pour un disque système ayant déjà démarré en UEFI.
-- **L'étape 6 distingue « la machine a démarré » de « la machine a démarré comme prévu »**. Une machine virtuelle peut s'amorcer sur une entrée de démarrage obsolète et paraître saine tout en étant à un redémarrage de la panne.
+- **Step 0 is the only genuine rollback path** once the disk has been converted. There is no safe, automated GPT to MBR conversion for a system disk that has already booted in UEFI mode.
+- **Step 6 distinguishes "the machine booted" from "the machine booted as intended"**. A virtual machine can start from a stale boot entry and appear healthy while still being one reboot away from failing.
 
-# Différence structurelle entre les deux hyperviseurs
+# Structural difference between the two hypervisors
 
-Le point d'architecture le plus déterminant du projet est que **les deux hyperviseurs ne se comportent pas de la même manière**, ce qui impose deux chemins de migration distincts.
+The single most consequential architectural point of the project is that **the two hypervisors do not behave in the same way**, which imposes two distinct migration paths.
 
-| Critère | VMware (ESXi / vSphere) | Hyper-V |
+| Criterion | VMware (ESXi / vSphere) | Hyper-V |
 |---|---|---|
-| Bascule BIOS vers EFI sur une VM existante | **Oui.** Le firmware est un paramètre de configuration modifiable machine éteinte. | **Non.** Le firmware est déterminé par la *génération* de la VM (Gen 1 = BIOS, Gen 2 = UEFI), figée à la création. |
-| Méthode | Reconfiguration de la VM existante (API `ReconfigVM`). | Création d'une **nouvelle VM Génération 2**, rattachement du disque converti, réplication de la configuration. |
-| Conservation de l'identité de la VM | Oui (même objet, même UUID). | Non. Nouvel objet VM ; la VM d'origine est conservée renommée. |
-| Impact sur les sauvegardes / supervision | Faible. | À anticiper : la nouvelle VM peut être perçue comme un nouvel objet par les outils tiers. |
+| Switching BIOS to EFI on an existing VM | **Yes.** Firmware is a configuration parameter, changeable while the machine is powered off. | **No.** Firmware is determined by the VM *generation* (Gen 1 = BIOS, Gen 2 = UEFI), fixed at creation time. |
+| Method | Reconfiguration of the existing VM (`ReconfigVM` API). | Creation of a **new Generation 2 VM**, attachment of the converted disk, replication of the configuration. |
+| VM identity preserved | Yes (same object, same UUID). | No. A new VM object; the original VM is retained under a new name. |
+| Impact on backup / monitoring | Low. | Must be anticipated: the new VM may be seen as a new object by third-party tooling. |
 
-## Conséquences d'exploitation
+## Operational consequences
 
-Le chemin Hyper-V comporte des contraintes supplémentaires à intégrer au chiffrage :
+The Hyper-V path carries additional constraints that must be factored into the estimate:
 
-- Le disque doit être au format **VHDX** ; les disques VHD nécessitent une conversion préalable (`Convert-VHD`).
-- Les cartes réseau « Legacy Network Adapter » (spécifiques Gen 1) n'ont pas d'équivalent en Gen 2 et sont remplacées par des cartes synthétiques ; **l'adresse MAC statique éventuelle doit être contrôlée**.
-- La VM d'origine est conservée (renommée avec le suffixe `-gen1-legacy`) et n'est **jamais supprimée automatiquement**. Sa suppression relève d'une décision humaine explicite après validation.
+- The disk must be in **VHDX** format; VHD disks require prior conversion (`Convert-VHD`).
+- "Legacy Network Adapter" cards (Gen 1 only) have no Gen 2 equivalent and are replaced by synthetic adapters; **any static MAC address must be verified afterwards**.
+- The original VM is retained (renamed with the `-gen1-legacy` suffix) and is **never deleted automatically**. Its removal is an explicit human decision taken after validation.
 
-# Matrice de compatibilité des systèmes invités
+# Guest operating system compatibility matrix
 
-Légende des verdicts :
+Verdict legend:
 
-| Symbole | Signification |
+| Symbol | Meaning |
 |---|---|
-| **OK** | Conversion en place supportée par les composants livrés |
-| **HORS LIGNE** | Conversion possible, mais nécessitant un amorçage sur média externe |
-| **REFUS** | Aucune voie supportée — reconstruction préconisée |
+| **OK** | In-place conversion supported by the delivered components |
+| **OFFLINE** | Conversion possible, but requires booting from external media |
+| **REFUSED** | No supported path — rebuild recommended |
 
 ## Windows Server
 
-| Version | Build | Boot UEFI | Secure Boot | `MBR2GPT` natif | Invité Hyper-V Gen 2 | Fin de support | Verdict |
+| Version | Build | UEFI boot | Secure Boot | Native `MBR2GPT` | Hyper-V Gen 2 guest | End of support | Verdict |
 |---|---|---|---|---|---|---|---|
-| 2003 / 2003 R2 | 5.2 | Non | Non | Non | Non | Juillet 2015 | **REFUS** |
-| 2008 / 2008 R2 | 6.0 / 6.1 | Oui (x64) | Non | Non | **Non supporté** | Janvier 2020 | **REFUS** |
-| 2012 / 2012 R2 | 9200 / 9600 | Oui | Oui | **Non** | Oui | ESU : octobre 2026 | **HORS LIGNE** |
-| 2016 | 14393 | Oui | Oui | **Non** | Oui | Janvier 2027 | **HORS LIGNE** |
-| 2019 | 17763 | Oui | Oui | Oui | Oui | Janvier 2029 | **OK** |
-| 2022 | 20348 | Oui | Oui | Oui | Oui | Octobre 2031 | **OK** |
-| 2025 | 26100 | Oui | Oui | Oui | Oui | Novembre 2034 | **OK** |
+| 2003 / 2003 R2 | 5.2 | No | No | No | No | July 2015 | **REFUSED** |
+| 2008 / 2008 R2 | 6.0 / 6.1 | Yes (x64) | No | No | **Not supported** | January 2020 | **REFUSED** |
+| 2012 / 2012 R2 | 9200 / 9600 | Yes | Yes | **No** | Yes | ESU: October 2026 | **OFFLINE** |
+| 2016 | 14393 | Yes | Yes | **No** | Yes | January 2027 | **OFFLINE** |
+| 2019 | 17763 | Yes | Yes | Yes | Yes | January 2029 | **OK** |
+| 2022 | 20348 | Yes | Yes | Yes | Yes | October 2031 | **OK** |
+| 2025 | 26100 | Yes | Yes | Yes | Yes | November 2034 | **OK** |
 
-## Contrainte majeure : Server 2012 R2 et 2016
+## Major constraint: Server 2012 R2 and 2016
 
-L'outil `MBR2GPT.exe` a été livré avec **Windows 10 version 1703 (build 15063)**.
+The `MBR2GPT.exe` tool shipped with **Windows 10 version 1703 (build 15063)**.
 
-Windows Server 2016 repose sur le socle de code de Windows 10 version 1607 (**build 14393**) et **ne contient pas cet outil**. Windows Server 2012 R2 (build 9600) non plus. L'hypothèse courante selon laquelle « Server 2016 dispose de MBR2GPT » est **erronée** et constitue le principal facteur de dérive de planning identifié.
+Windows Server 2016 is built on the Windows 10 version 1607 codebase (**build 14393**) and **does not contain this tool**. Neither does Windows Server 2012 R2 (build 9600). The common assumption that "Server 2016 has MBR2GPT" is **incorrect**, and is the principal schedule-slippage factor identified.
 
-Pour ces deux versions, la conversion reste réalisable, mais uniquement hors ligne :
+For these two versions the conversion remains achievable, but only offline:
 
-1. Amorçage de la machine virtuelle sur un média **WinPE 10.0.15063 ou supérieur** (ADK Windows 10 1703+ ou Server 2019+).
-2. Exécution de `mbr2gpt /validate /disk:0` puis `mbr2gpt /convert /disk:0`, **sans le commutateur `/allowFullOS`** qui est réservé à un système démarré.
-3. Arrêt, bascule du firmware, redémarrage.
+1. Boot the virtual machine from **WinPE 10.0.15063 or later** media (Windows 10 1703+ or Server 2019+ ADK).
+2. Run `mbr2gpt /validate /disk:0` then `mbr2gpt /convert /disk:0`, **without the `/allowFullOS` switch**, which is reserved for a running system.
+3. Shut down, switch the firmware, reboot.
 
-> **Point de vigilance :** la copie du binaire `mbr2gpt.exe` depuis un Windows plus récent vers un système ancien n'est pas supportée par l'éditeur et est proscrite — l'exécutable dépend de la pile de servicing du système avec lequel il est livré.
+> **Point of caution:** copying the `mbr2gpt.exe` binary from a newer Windows onto an older system is not supported by the vendor and is prohibited — the executable depends on the servicing stack of the OS it ships with.
 
 ## Red Hat Enterprise Linux
 
-Applicable également aux rebuilds compatibles de chaque génération (CentOS, AlmaLinux, Rocky Linux).
+Applies equally to the compatible rebuilds of each generation (CentOS, AlmaLinux, Rocky Linux).
 
-| Version | Boot UEFI | Secure Boot | Invité Hyper-V Gen 2 | Support | Verdict |
+| Version | UEFI boot | Secure Boot | Hyper-V Gen 2 guest | Support | Verdict |
 |---|---|---|---|---|---|
-| RHEL 5 | Non viable sur x86_64 | Non | Non | Fin de vie novembre 2020 | **REFUS** |
-| RHEL 6 | Présent mais non fiable | Non | Non (Gen 2 exige 7.0+) | ELS terminé juin 2024 | **REFUS** |
-| RHEL 7 | Oui | Oui (premier RHEL avec Secure Boot) | Oui (7.0+) | Fin de vie juin 2024, ELS disponible | **OK, mais OS en fin de vie** |
-| RHEL 8 | Oui | Oui | Oui | Maintenance jusqu'à mai 2029 | **OK** |
-| RHEL 9 | Oui | Oui | Oui | Maintenance jusqu'à mai 2032 | **OK** |
-| RHEL 10 | Oui | Oui | Oui | Publié mai 2025, maintenance ~mai 2035 | **OK** |
+| RHEL 5 | Not viable on x86_64 | No | No | End of life November 2020 | **REFUSED** |
+| RHEL 6 | Present but unreliable | No | No (Gen 2 requires 7.0+) | ELS ended June 2024 | **REFUSED** |
+| RHEL 7 | Yes | Yes (first RHEL with Secure Boot) | Yes (7.0+) | End of life June 2024, ELS available | **OK, but OS is end of life** |
+| RHEL 8 | Yes | Yes | Yes | Maintenance until May 2029 | **OK** |
+| RHEL 9 | Yes | Yes | Yes | Maintenance until May 2032 | **OK** |
+| RHEL 10 | Yes | Yes | Yes | Released May 2025, maintenance to ~May 2035 | **OK** |
 
-### Justification du refus de RHEL 6
+### Rationale for refusing RHEL 6
 
-RHEL 6 fournit `efibootmgr` et son installeur sait opérer en mode UEFI : sur le papier, la version est éligible. En pratique, le chemin GPT/UEFI de RHEL 6 présente des défauts connus — notamment l'incapacité d'`efibootmgr` à créer une entrée de démarrage lorsque les variables dépassent 1024 octets — et plusieurs produits Red Hat bâtis sur RHEL 6 ont été livrés en amorçage hérité uniquement. Combiné au dépassement de la phase de vie étendue, l'effort de conversion porterait sur un système devant de toute façon être remplacé.
+RHEL 6 ships `efibootmgr` and its installer can operate in UEFI mode: on paper, the version qualifies. In practice, the GPT/UEFI path in RHEL 6 carried known defects — notably `efibootmgr` failing to create a boot entry when boot variables exceeded 1024 bytes — and several Red Hat products built on RHEL 6 shipped with legacy-only boot. Combined with the operating system being past even its extended life phase, conversion effort would be spent on a system that must be replaced regardless.
 
-### Cas particulier de RHEL 7
+### Special case of RHEL 7
 
-RHEL 7 est techniquement convertible mais hors support complet depuis juin 2024. Convertir ce parc revient à obtenir un amorçage UEFI sur un système qu'il faudra remplacer. **Préconisation : intégrer la bascule UEFI à la montée de version vers RHEL 8 ou 9 plutôt que de réaliser l'opération deux fois.**
+RHEL 7 is technically convertible but has been out of full support since June 2024. Converting this estate buys a UEFI boot on a system that will have to be replaced anyway. **Recommendation: fold the UEFI switch into the upgrade to RHEL 8 or 9 rather than performing the operation twice.**
 
-# Sécurité
+# Security
 
 ## Secure Boot
 
-Le Secure Boot est une fonction distincte de l'UEFI, activable **après** validation d'un amorçage UEFI simple. Son activation prématurée est une cause fréquente de machine convertie correctement mais refusant de démarrer.
+Secure Boot is a feature distinct from UEFI, to be enabled **after** a plain UEFI boot has been validated. Enabling it prematurely is a frequent cause of a machine that converts correctly yet refuses to start.
 
-| Plateforme | Prérequis |
+| Platform | Prerequisite |
 |---|---|
-| VMware | Version matérielle de la VM ≥ 13, et chargeur/noyau signés côté invité. |
-| Hyper-V — invité Windows | Modèle `MicrosoftWindows`. |
-| Hyper-V — invité Linux | Modèle **`MicrosoftUEFICertificateAuthority`**, et non `MicrosoftWindows`. |
+| VMware | VM hardware version ≥ 13, and a signed loader/kernel on the guest side. |
+| Hyper-V — Windows guest | `MicrosoftWindows` template. |
+| Hyper-V — Linux guest | **`MicrosoftUEFICertificateAuthority`** template, not `MicrosoftWindows`. |
 
-Sous Linux, le Secure Boot exige un shim signé (`shim-x64`), fourni par la distribution à partir de RHEL 7. Un noyau non signé impose la désactivation du Secure Boot.
+On Linux, Secure Boot requires a signed shim (`shim-x64`), provided by the distribution from RHEL 7 onward. An unsigned kernel forces Secure Boot to be disabled.
 
-## Point d'attention calendaire
+## Calendar watch point
 
-Plusieurs certificats de signature Secure Boot arrivent à expiration au cours de **2026**, ce qui affecte la manière dont les shims sont signés et reconnus. Si le projet est motivé principalement par l'activation du Secure Boot, il convient de vérifier les préconisations en vigueur de Red Hat et Microsoft sur ce renouvellement de certificats avant d'arrêter le calendrier.
+Several Secure Boot signing certificates reach expiry during **2026**, which affects how shims are signed and trusted. If the project is motivated primarily by enabling Secure Boot, the current Red Hat and Microsoft guidance on this certificate rollover should be checked before the schedule is finalized.
 
-## TPM virtuel
+## Virtual TPM
 
-Les fonctions Windows 11, Credential Guard et VBS requièrent, au-delà de l'UEFI, un TPM 2.0 exposé par l'hyperviseur. Cette activation est une opération distincte, à réaliser après validation de l'amorçage UEFI.
+Windows 11, Credential Guard and VBS require, beyond UEFI, a TPM 2.0 exposed by the hypervisor. Enabling it is a separate operation, to be carried out after the UEFI boot has been validated.
 
-# Composants livrés
+# Delivered components
 
-L'automatisation est constituée de scripts PowerShell (Windows, VMware, Hyper-V) et Bash (Linux), classés en trois natures selon leur impact.
+The automation consists of PowerShell scripts (Windows, VMware, Hyper-V) and Bash scripts (Linux), classified into three kinds according to their impact.
 
-## Classification des composants
+## Component classification
 
-| Nature | Comportement imposé |
+| Kind | Mandated behavior |
 |---|---|
-| **Lecture seule** | Ne modifie rien. Ne propose pas d'option de forçage. |
-| **Additif** | Crée un instantané. Ne doit jamais être bloqué par une demande de confirmation. |
-| **Destructif** | Réécrit une table de partitions ou reconfigure/supprime une VM. Demande confirmation par défaut, avec option de forçage pour l'automatisation. |
+| **Read-only** | Changes nothing. Offers no force option. |
+| **Additive** | Creates a snapshot. Must never be blocked behind a confirmation prompt. |
+| **Destructive** | Rewrites a partition table, or reconfigures/removes a VM. Prompts for confirmation by default, with a force option for automation. |
 
-## Inventaire
+## Inventory
 
-| Composant | Plateforme | Nature | Rôle |
+| Component | Platform | Kind | Role |
 |---|---|---|---|
-| `Test-UefiReadiness.ps1` | Windows invité | Lecture seule | Audit d'éligibilité : build, TPM, BitLocker, validation MBR2GPT |
-| `Convert-WindowsToUefi.ps1` | Windows invité | Destructif | Conversion MBR vers GPT (encapsulation de MBR2GPT) |
-| `Test-UefiMigrationResult.ps1` | Windows invité | Lecture seule | Validation post-migration depuis l'invité |
-| `check-uefi-readiness.sh` | Linux invité | Lecture seule | Audit d'éligibilité : table de partitions, espace libre, paquets |
-| `convert-linux-to-uefi.sh` | Linux invité | Destructif | Conversion MBR vers GPT, création ESP, installation GRUB-EFI |
-| `verify-uefi-migration.sh` | Linux invité | Lecture seule | Validation post-migration depuis l'invité |
-| `restore-partition-table.sh` | Linux invité | Destructif | Restauration d'une table de partitions sauvegardée |
-| `Get-VMFirmwareReport.ps1` | VMware | Lecture seule | Audit du firmware du parc |
-| `New-PreMigrationSnapshot.ps1` | VMware | Additif | Instantané de sécurité avant migration |
-| `Set-VMFirmware.ps1` | VMware | Destructif | Bascule BIOS / EFI sur VM existante |
-| `Get-VMGenerationReport.ps1` | Hyper-V | Lecture seule | Audit des générations du parc |
-| `New-PreMigrationCheckpoint.ps1` | Hyper-V | Additif | Point de contrôle de sécurité avant migration |
-| `Convert-Gen1ToGen2.ps1` | Hyper-V | Destructif | Migration Génération 1 vers Génération 2 |
-| `Restore-Gen1VM.ps1` | Hyper-V | Destructif | Retour arrière vers la VM Génération 1 conservée |
+| `Test-UefiReadiness.ps1` | Windows guest | Read-only | Eligibility audit: build, TPM, BitLocker, MBR2GPT validation |
+| `Convert-WindowsToUefi.ps1` | Windows guest | Destructive | MBR to GPT conversion (MBR2GPT wrapper) |
+| `Test-UefiMigrationResult.ps1` | Windows guest | Read-only | Post-migration validation from within the guest |
+| `check-uefi-readiness.sh` | Linux guest | Read-only | Eligibility audit: partition table, free space, packages |
+| `convert-linux-to-uefi.sh` | Linux guest | Destructive | MBR to GPT conversion, ESP creation, GRUB-EFI installation |
+| `verify-uefi-migration.sh` | Linux guest | Read-only | Post-migration validation from within the guest |
+| `restore-partition-table.sh` | Linux guest | Destructive | Restoration of a saved partition table |
+| `Get-VMFirmwareReport.ps1` | VMware | Read-only | Estate-wide firmware audit |
+| `New-PreMigrationSnapshot.ps1` | VMware | Additive | Pre-migration safety snapshot |
+| `Set-VMFirmware.ps1` | VMware | Destructive | BIOS / EFI switch on an existing VM |
+| `Get-VMGenerationReport.ps1` | Hyper-V | Read-only | Estate-wide generation audit |
+| `New-PreMigrationCheckpoint.ps1` | Hyper-V | Additive | Pre-migration safety checkpoint |
+| `Convert-Gen1ToGen2.ps1` | Hyper-V | Destructive | Generation 1 to Generation 2 migration |
+| `Restore-Gen1VM.ps1` | Hyper-V | Destructive | Rollback to the retained Generation 1 VM |
 
-## Principes de conception retenus
+## Design principles adopted
 
-1. **Aucun composant ne supprime le recours de l'exploitant.** La migration Hyper-V renomme la VM source au lieu de la supprimer ; le script de retour arrière vérifie l'existence et la génération de la VM de secours **avant** toute suppression, de sorte qu'une VM de secours absente interrompt l'opération plutôt que de laisser l'exploitant sans aucune des deux machines.
-2. **Simulation par défaut sur les opérations destructives.** Les scripts Bash exigent `--confirm` explicite ; les scripts PowerShell exposent `-WhatIf`.
-3. **Aucune promesse excédant la capacité réelle.** La restauration de table de partitions documente explicitement qu'elle **ne reconvertit pas** un disque en MBR, cette opération étant techniquement impossible depuis la sauvegarde produite.
-4. **Le nettoyage final est une décision humaine.** Aucune suppression automatique de VM, de disque ou d'instantané.
+1. **No component removes the operator's fallback.** The Hyper-V migration renames the source VM instead of deleting it; the rollback script verifies that the fallback VM exists and is Generation 1 **before** any removal, so that a missing fallback aborts the operation rather than leaving the operator with neither machine.
+2. **Simulation by default on destructive operations.** Bash scripts require an explicit `--confirm`; PowerShell scripts expose `-WhatIf`.
+3. **No promise exceeding actual capability.** The partition-table restore explicitly documents that it **does not** convert a disk back to MBR, that operation being technically impossible from the backup produced.
+4. **Final cleanup is a human decision.** No automatic deletion of any VM, disk or snapshot.
 
-## Contrôle qualité
+## Quality control
 
-Une chaîne d'intégration continue exécute à chaque modification : analyse statique Bash (ShellCheck), analyse statique PowerShell (PSScriptAnalyzer), contrôle syntaxique, et une suite de tests vérifiant que les règles de sûreté ci-dessus sont effectivement respectées par chaque composant. Tout nouveau composant doit être déclaré dans le référentiel de classification, faute de quoi la chaîne échoue.
+A continuous integration pipeline runs on every change: Bash static analysis (ShellCheck), PowerShell static analysis (PSScriptAnalyzer), syntax checking, and a test suite verifying that the safety rules above are actually observed by each component. Any new component must be declared in the classification registry, failing which the pipeline fails.
 
-# Prérequis techniques
+# Technical prerequisites
 
-## Environnement VMware
+## VMware environment
 
-- Version matérielle de VM ≥ 13 pour le Secure Boot.
-- Droit vSphere `VirtualMachine.Config.Settings` sur les VM concernées.
-- Module PowerCLI installé sur le poste d'administration.
-- Machine virtuelle **éteinte** pour la bascule du firmware.
+- VM hardware version ≥ 13 for Secure Boot.
+- vSphere `VirtualMachine.Config.Settings` privilege on the target VMs.
+- PowerCLI module installed on the administration workstation.
+- Virtual machine **powered off** for the firmware switch.
 
-## Environnement Hyper-V
+## Hyper-V environment
 
-- Hôte Hyper-V sous Windows Server 2012 R2 ou supérieur.
-- Module PowerShell Hyper-V disponible.
-- Espace disque suffisant pour la coexistence temporaire des deux VM.
-- Disques au format VHDX.
+- Hyper-V host on Windows Server 2012 R2 or later.
+- Hyper-V PowerShell module available.
+- Sufficient disk space for the two VMs to coexist temporarily.
+- Disks in VHDX format.
 
-## Systèmes invités
+## Guest operating systems
 
-| Invité | Prérequis |
+| Guest | Prerequisite |
 |---|---|
-| Windows | Compte administrateur local ; BitLocker suspendu le cas échéant ; au plus 3 partitions primaires ; espace non alloué disponible (~100 Mo) |
-| Linux | Accès root ; espace libre pour la partition ESP (512 Mo recommandés) ; dépôts accessibles pour l'installation des paquets `gdisk`, `grub-efi`, `efibootmgr`, `dosfstools` |
+| Windows | Local administrator account; BitLocker suspended where applicable; at most 3 primary partitions; unallocated space available (~100 MB) |
+| Linux | Root access; free space for the ESP partition (512 MB recommended); repositories reachable to install the `gdisk`, `grub-efi`, `efibootmgr` and `dosfstools` packages |
 
-# Analyse des risques
+# Risk analysis
 
-| # | Risque | Probabilité | Impact | Mesure de maîtrise |
+| # | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|---|
-| R1 | Machine non démarrable après bascule (ordre des opérations inversé) | Moyenne | Critique | Séquence imposée par la documentation ; scripts de validation à chaque étape ; instantané préalable obligatoire |
-| R2 | Absence de `MBR2GPT` sur Server 2012 R2 / 2016 découverte en cours d'intervention | **Élevée** | Majeur | Matrice de compatibilité communiquée en amont ; le script d'audit identifie le cas et indique la voie WinPE |
-| R3 | Secure Boot activé avant validation de l'amorçage UEFI | Moyenne | Majeur | Activation en étape distincte, postérieure à la validation ; modèle de certificat adapté à l'OS invité |
-| R4 | Perte du recours en cas d'échec (instantané absent) | Faible | Critique | Scripts d'instantané dédiés ; étape 0 non facultative dans la procédure |
-| R5 | VM Hyper-V Gen 2 non reconnue par les outils de sauvegarde | Moyenne | Modéré | Recensement des outils tiers avant campagne ; VM d'origine conservée jusqu'à validation complète |
-| R6 | Perte de l'adressage MAC statique (Hyper-V, carte Legacy) | Moyenne | Modéré | Contrôle post-migration de l'adressage ; relevé préalable de la configuration réseau |
-| R7 | Conversion tentée sur un OS hors support | Moyenne | Majeur | Matrice de compatibilité ; verdict **REFUS** explicite ; script d'audit bloquant |
-| R8 | Saturation du stockage par les instantanés durant une campagne | Moyenne | Modéré | Suppression des instantanés après validation ; les scripts signalent les instantanés déjà présents |
+| R1 | Machine unbootable after the switch (operation order inverted) | Medium | Critical | Sequence mandated by the documentation; validation scripts at each step; mandatory prior snapshot |
+| R2 | Absence of `MBR2GPT` on Server 2012 R2 / 2016 discovered mid-intervention | **High** | Major | Compatibility matrix circulated in advance; the audit script identifies the case and points to the WinPE route |
+| R3 | Secure Boot enabled before the UEFI boot is validated | Medium | Major | Enabled as a separate step after validation; certificate template matched to the guest OS |
+| R4 | Loss of fallback in the event of failure (snapshot missing) | Low | Critical | Dedicated snapshot scripts; step 0 is non-optional in the procedure |
+| R5 | Hyper-V Gen 2 VM not recognized by backup tooling | Medium | Moderate | Third-party tooling surveyed before the campaign; original VM retained until full validation |
+| R6 | Loss of static MAC addressing (Hyper-V, Legacy adapter) | Medium | Moderate | Post-migration addressing check; network configuration recorded beforehand |
+| R7 | Conversion attempted on an out-of-support OS | Medium | Major | Compatibility matrix; explicit **REFUSED** verdict; blocking audit script |
+| R8 | Storage saturation from snapshots during a campaign | Medium | Moderate | Snapshots deleted after validation; scripts report snapshots already present |
 
-# Trajectoire de déploiement
+# Rollout approach
 
-## Segmentation du parc
+## Estate segmentation
 
-Le parc doit être segmenté en trois lots traités différemment :
+The estate must be segmented into three lots, each handled differently:
 
-| Lot | Contenu | Traitement |
+| Lot | Contents | Treatment |
 |---|---|---|
-| **Lot 1 — Conversion standard** | Server 2019 / 2022 / 2025, RHEL 8 / 9 / 10 | Procédure nominale complète |
-| **Lot 2 — Conversion hors ligne** | Server 2012 R2, Server 2016 | Procédure nominale, étape de conversion sur média WinPE ; immobilisation plus longue |
-| **Lot 3 — Reconstruction** | Server 2003 / 2008 / 2008 R2, RHEL 5 / 6 | Hors périmètre de conversion. Reconstruction sur système courant et migration applicative |
+| **Lot 1 — Standard conversion** | Server 2019 / 2022 / 2025, RHEL 8 / 9 / 10 | Full nominal procedure |
+| **Lot 2 — Offline conversion** | Server 2012 R2, Server 2016 | Nominal procedure, with the conversion step performed on WinPE media; longer outage |
+| **Lot 3 — Rebuild** | Server 2003 / 2008 / 2008 R2, RHEL 5 / 6 | Outside the conversion scope. Rebuild on a current operating system and migrate the workload |
 
-RHEL 7 constitue un cas intermédiaire : techniquement éligible au lot 1, mais dont la préconisation est le rattachement au projet de montée de version.
+RHEL 7 is an intermediate case: technically eligible for Lot 1, but the recommendation is to attach it to the version-upgrade project.
 
-## Séquencement recommandé
+## Recommended sequencing
 
-1. **Inventaire** : exécution des scripts d'audit en lecture seule sur l'ensemble du parc, sans impact de production.
-2. **Segmentation** : répartition dans les trois lots ci-dessus.
-3. **Pilote** : traitement d'un échantillon représentatif non critique de chaque lot, incluant **la validation de la procédure de retour arrière** et non uniquement du chemin nominal.
-4. **Déploiement par vagues** : traitement par lots homogènes, avec point d'arrêt (go / no-go) après chaque vague.
-5. **Clôture** : suppression des instantanés et des VM de secours après période d'observation.
+1. **Inventory**: run the read-only audit scripts across the estate, with no production impact.
+2. **Segmentation**: allocate machines to the three lots above.
+3. **Pilot**: process a representative, non-critical sample of each lot, including **validation of the rollback procedure** and not only of the nominal path.
+4. **Wave rollout**: process homogeneous lots, with a go / no-go decision point after each wave.
+5. **Closure**: delete snapshots and fallback VMs after an observation period.
 
-# Limites connues et engagements
+# Known limitations and commitments
 
-## Ce que la solution garantit
+## What the solution guarantees
 
-- La conversion en place du disque système, sans perte de données, pour les systèmes classés **OK** dans la matrice.
-- La conservation systématique d'un moyen de retour arrière tant que l'exploitant n'a pas explicitement procédé au nettoyage.
-- La détection en amont des cas non éligibles, avant toute écriture sur disque.
+- In-place conversion of the system disk, without data loss, for systems classified **OK** in the matrix.
+- Systematic retention of a rollback path for as long as the operator has not explicitly performed the cleanup.
+- Up-front detection of ineligible cases, before any write to disk.
 
-## Ce que la solution ne garantit pas
+## What the solution does not guarantee
 
-- **Aucune reconversion automatisée de GPT vers MBR.** Une fois le disque converti, le retour arrière réel passe exclusivement par la restauration de l'instantané.
-- **Aucune prise en charge des topologies complexes** listées en périmètre exclu.
-- **Aucune validation applicative.** Les scripts valident l'amorçage et la configuration système ; la validation du service rendu par la machine relève de l'exploitant applicatif.
-- Les dates de fin de support mentionnées sont susceptibles d'évolution et doivent être revérifiées auprès des éditeurs avant tout engagement calendaire.
+- **No automated GPT to MBR reconversion.** Once the disk has been converted, genuine rollback is exclusively through snapshot restoration.
+- **No support for the complex topologies** listed as out of scope.
+- **No application-level validation.** The scripts validate the boot and the system configuration; validating the service delivered by the machine is the responsibility of the application owner.
+- The end-of-support dates quoted are subject to change and must be re-verified with the vendors before any schedule commitment.
 
-# Glossaire
+# Glossary
 
-| Terme | Définition |
+| Term | Definition |
 |---|---|
-| **BIOS** | Basic Input/Output System. Firmware d'amorçage historique, en voie de retrait. |
-| **UEFI** | Unified Extensible Firmware Interface. Firmware d'amorçage moderne, remplaçant du BIOS. |
-| **MBR** | Master Boot Record. Schéma de partitionnement hérité, limité à 2 To et 4 partitions primaires. |
-| **GPT** | GUID Partition Table. Schéma de partitionnement associé à l'UEFI, sans ces limites. |
-| **ESP** | EFI System Partition. Partition FAT32 contenant les chargeurs d'amorçage `.efi`. |
-| **Secure Boot** | Mécanisme UEFI de vérification de signature du chargeur et du noyau au démarrage. |
-| **Génération (Hyper-V)** | Attribut figé d'une VM Hyper-V déterminant son firmware : Gen 1 = BIOS, Gen 2 = UEFI. |
-| **shim** | Chargeur signé intermédiaire permettant l'amorçage Linux sous Secure Boot. |
-| **WinPE** | Windows Preinstallation Environment. Environnement d'amorçage minimal utilisé pour les opérations hors ligne. |
-| **TPM** | Trusted Platform Module. Composant de stockage sécurisé de clés, requis par certaines fonctions de sécurité. |
-| **ESU** | Extended Security Updates. Programme payant de correctifs de sécurité au-delà du support étendu. |
+| **BIOS** | Basic Input/Output System. The legacy boot firmware, now being retired. |
+| **UEFI** | Unified Extensible Firmware Interface. The modern boot firmware, successor to the BIOS. |
+| **MBR** | Master Boot Record. Legacy partitioning scheme, limited to 2 TB and four primary partitions. |
+| **GPT** | GUID Partition Table. The partitioning scheme associated with UEFI, without those limits. |
+| **ESP** | EFI System Partition. FAT32 partition holding the `.efi` boot loaders. |
+| **Secure Boot** | UEFI mechanism verifying the signature of the loader and kernel at startup. |
+| **Generation (Hyper-V)** | Immutable attribute of a Hyper-V VM determining its firmware: Gen 1 = BIOS, Gen 2 = UEFI. |
+| **shim** | Signed intermediate loader allowing Linux to boot under Secure Boot. |
+| **WinPE** | Windows Preinstallation Environment. Minimal boot environment used for offline operations. |
+| **TPM** | Trusted Platform Module. Secure key storage component required by certain security features. |
+| **ESU** | Extended Security Updates. Paid program providing security fixes beyond extended support. |

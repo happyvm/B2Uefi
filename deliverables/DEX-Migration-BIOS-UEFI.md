@@ -1,216 +1,216 @@
 ---
-title: "Document d'Exploitation"
-subtitle: "Procédure de migration BIOS vers UEFI — VMware et Hyper-V"
-author: "Direction Infrastructure"
+title: "Operations Runbook"
+subtitle: "BIOS to UEFI Migration Procedure — VMware and Hyper-V"
+author: "Infrastructure Department"
 date: "Version 1.0"
-lang: fr-FR
+lang: en
 toc: true
-toc-title: "Table des matières"
+toc-title: "Table of Contents"
 toc-depth: 3
 numbersections: true
 ---
 
-# Fiche du document
+# Document control
 
-| Rubrique | Valeur |
+| Item | Value |
 |---|---|
-| Titre | Document d'Exploitation — Migration BIOS vers UEFI |
-| Référence | DEX-B2UEFI-001 |
+| Title | Operations Runbook — BIOS to UEFI Migration |
+| Reference | DEX-B2UEFI-001 |
 | Version | 1.0 |
-| Statut | À valider |
-| Classification | Interne |
-| Document d'architecture associé | DAT-B2UEFI-001 |
-| Public visé | Exploitants système et virtualisation, astreinte N2/N3 |
-| Rédacteur | *(à compléter)* |
-| Valideur exploitation | *(à compléter)* |
+| Status | Pending approval |
+| Classification | Internal |
+| Related architecture document | DAT-B2UEFI-001 |
+| Intended audience | System and virtualization operators, L2/L3 on-call |
+| Author | *(to be completed)* |
+| Operations reviewer | *(to be completed)* |
 
-## Historique des révisions
+## Revision history
 
-| Version | Date | Auteur | Nature de la modification |
+| Version | Date | Author | Nature of change |
 |---|---|---|---|
-| 1.0 | *(à compléter)* | *(à compléter)* | Création initiale |
+| 1.0 | *(to be completed)* | *(to be completed)* | Initial release |
 
-## Avertissement
+## Warning
 
-Cette procédure modifie la table de partitions du disque système et le firmware de machines virtuelles de production. **Une erreur d'enchaînement rend la machine non démarrable.**
+This procedure modifies the system disk partition table and the firmware of production virtual machines. **An error in the sequence renders the machine unbootable.**
 
-Aucune étape de ce document ne doit être engagée sans :
+No step in this document may be started without:
 
-1. un instantané (snapshot / checkpoint) vérifié restaurable ;
-2. une sauvegarde applicative validée ;
-3. une fenêtre de maintenance actée avec les responsables applicatifs.
+1. a snapshot / checkpoint verified as restorable;
+2. a validated application backup;
+3. a maintenance window agreed with the application owners.
 
-# Objet et conditions d'emploi
+# Purpose and conditions of use
 
-## Objet
+## Purpose
 
-Ce document décrit la procédure d'exploitation à appliquer pour migrer une machine virtuelle du mode d'amorçage BIOS vers UEFI, sur VMware ou Hyper-V, pour un système invité Windows ou Linux.
+This document describes the operational procedure to migrate a virtual machine's boot mode from BIOS to UEFI, on VMware or Hyper-V, for a Windows or Linux guest operating system.
 
-Il couvre la préparation, l'exécution, les points de contrôle, le retour arrière et le diagnostic des incidents courants.
+It covers preparation, execution, control points, rollback and diagnosis of common incidents.
 
-## Durée et impact
+## Duration and impact
 
-| Phase | Durée indicative | Interruption de service |
+| Phase | Indicative duration | Service interruption |
 |---|---|---|
-| Audit d'éligibilité | 5 min | Non |
-| Instantané de sécurité | 2 à 10 min | Non |
-| Conversion du disque invité | 5 à 15 min | **Non** (système en fonctionnement) |
-| Arrêt, bascule firmware, redémarrage | 5 à 15 min | **Oui** |
-| Validation post-migration | 5 min | Non |
-| **Total avec interruption** | — | **5 à 15 minutes** |
+| Eligibility audit | 5 min | No |
+| Safety snapshot | 2 to 10 min | No |
+| Guest disk conversion | 5 to 15 min | **No** (system running) |
+| Shutdown, firmware switch, reboot | 5 to 15 min | **Yes** |
+| Post-migration validation | 5 min | No |
+| **Total with interruption** | — | **5 to 15 minutes** |
 
-Pour les systèmes Windows Server 2012 R2 et 2016, la conversion s'effectue hors ligne sur média WinPE : l'interruption s'étend alors à **30 à 45 minutes**.
+For Windows Server 2012 R2 and 2016, the conversion is performed offline from WinPE media: the interruption then extends to **30 to 45 minutes**.
 
-## Règle d'or
+## Golden rule
 
-> La conversion du disque invité se fait **toujours avant** la bascule du firmware. Jamais l'inverse. Jamais les deux dans la même opération sans validation intermédiaire.
+> The guest disk conversion is **always** done before the firmware switch. Never the other way round. Never both in the same operation without an intermediate validation.
 
-# Éligibilité — à vérifier avant toute planification
+# Eligibility — verify before any planning
 
-Contrôler la version du système invité dans le tableau ci-dessous **avant** d'engager quoi que ce soit.
+Check the guest operating system version in the table below **before** committing to anything.
 
 ## Windows Server
 
-| Version | Verdict | Procédure applicable |
+| Version | Verdict | Applicable procedure |
 |---|---|---|
-| 2019, 2022, 2025 | **Autorisé** | Procédure nominale (section 5) |
-| 2016 | **Hors ligne uniquement** | Procédure WinPE (section 6) |
-| 2012 / 2012 R2 | **Hors ligne uniquement** | Procédure WinPE (section 6) |
-| 2008 / 2008 R2 | **INTERDIT** | Aucune voie supportée. Escalader vers l'architecte. |
-| 2003 / 2003 R2 | **INTERDIT** | Aucune voie supportée. Escalader vers l'architecte. |
+| 2019, 2022, 2025 | **Permitted** | Nominal procedure (section 5) |
+| 2016 | **Offline only** | WinPE procedure (section 6) |
+| 2012 / 2012 R2 | **Offline only** | WinPE procedure (section 6) |
+| 2008 / 2008 R2 | **PROHIBITED** | No supported path. Escalate to the architect. |
+| 2003 / 2003 R2 | **PROHIBITED** | No supported path. Escalate to the architect. |
 
-> **Piège fréquent :** l'outil `MBR2GPT.exe` n'est **pas présent** sur Windows Server 2016 ni sur Server 2012 R2. Il n'est livré qu'à partir du socle Windows 10 1703 (build 15063), soit Server 2019. Ne pas copier le binaire depuis un autre système : opération non supportée par l'éditeur.
+> **Common trap:** the `MBR2GPT.exe` tool is **not present** on Windows Server 2016 or Server 2012 R2. It shipped only from the Windows 10 1703 codebase (build 15063), i.e. Server 2019. Do not copy the binary from another system: that is not supported by the vendor.
 
-## Red Hat Enterprise Linux (et CentOS / AlmaLinux / Rocky équivalents)
+## Red Hat Enterprise Linux (and equivalent CentOS / AlmaLinux / Rocky)
 
-| Version | Verdict | Observation |
+| Version | Verdict | Note |
 |---|---|---|
-| RHEL 8, 9, 10 | **Autorisé** | Procédure nominale |
-| RHEL 7 | **Autorisé sous réserve** | OS hors support complet. Valider avec l'architecte l'intérêt de convertir plutôt que de migrer de version. |
-| RHEL 6 | **INTERDIT** | Chemin UEFI non fiable, OS hors support |
-| RHEL 5 | **INTERDIT** | UEFI non viable sur x86_64 |
+| RHEL 8, 9, 10 | **Permitted** | Nominal procedure |
+| RHEL 7 | **Permitted with reservation** | OS out of full support. Confirm with the architect whether converting is preferable to a version upgrade. |
+| RHEL 6 | **PROHIBITED** | Unreliable UEFI path, OS out of support |
+| RHEL 5 | **PROHIBITED** | UEFI not viable on x86_64 |
 
-# Préparation de l'intervention
+# Preparing the intervention
 
-## Checklist de pré-intervention
+## Pre-intervention checklist
 
-À compléter et à conserver comme preuve d'exécution.
+To be completed and retained as evidence of execution.
 
-| # | Point de contrôle | Fait |
+| # | Control point | Done |
 |---|---|---|
-| 1 | Version du système invité vérifiée dans la matrice d'éligibilité | ☐ |
-| 2 | Fenêtre de maintenance actée avec le responsable applicatif | ☐ |
-| 3 | Sauvegarde applicative récente et **testée restaurable** | ☐ |
-| 4 | Instantané / point de contrôle créé | ☐ |
-| 5 | Espace disque libre suffisant sur la banque de données / l'hôte | ☐ |
-| 6 | BitLocker suspendu (invités Windows chiffrés) | ☐ |
-| 7 | Audit d'éligibilité exécuté sans erreur bloquante | ☐ |
-| 8 | Configuration réseau relevée (adresses MAC statiques éventuelles) | ☐ |
-| 9 | Accès console hyperviseur disponible (indispensable si la VM ne démarre plus) | ☐ |
-| 10 | Procédure de retour arrière lue et comprise par l'intervenant | ☐ |
+| 1 | Guest OS version checked against the eligibility matrix | ☐ |
+| 2 | Maintenance window agreed with the application owner | ☐ |
+| 3 | Application backup recent and **tested as restorable** | ☐ |
+| 4 | Snapshot / checkpoint created | ☐ |
+| 5 | Sufficient free space on the datastore / host | ☐ |
+| 6 | BitLocker suspended (encrypted Windows guests) | ☐ |
+| 7 | Eligibility audit run with no blocking error | ☐ |
+| 8 | Network configuration recorded (any static MAC addresses) | ☐ |
+| 9 | Hypervisor console access available (essential if the VM fails to boot) | ☐ |
+| 10 | Rollback procedure read and understood by the operator | ☐ |
 
-## Commandes de préparation
+## Preparation commands
 
-### Instantané de sécurité — VMware
+### Safety snapshot — VMware
 
 ```powershell
 Connect-VIServer -Server <vcenter>
 .\scripts\vmware\New-PreMigrationSnapshot.ps1 -VMName "srv-app01"
 ```
 
-### Point de contrôle de sécurité — Hyper-V
+### Safety checkpoint — Hyper-V
 
 ```powershell
 .\scripts\hyperv\New-PreMigrationCheckpoint.ps1 -VMName "srv-app01"
 ```
 
-Les deux scripts signalent les instantanés déjà présents et affichent les commandes exactes de restauration et de nettoyage. **Relever ces commandes avant de poursuivre.**
+Both scripts report any snapshots already present and display the exact restore and cleanup commands. **Record those commands before proceeding.**
 
-### Suspension de BitLocker (invité Windows chiffré)
+### Suspending BitLocker (encrypted Windows guest)
 
 ```powershell
 Suspend-BitLocker -MountPoint "C:" -RebootCount 0
 Get-BitLockerVolume -MountPoint "C:" | Select-Object MountPoint, ProtectionStatus
 ```
 
-# Procédure nominale
+# Nominal procedure
 
-Applicable aux invités Windows Server 2019 et supérieur, et RHEL 7 et supérieur.
+Applies to Windows Server 2019 and later guests, and RHEL 7 and later.
 
-## Étape 1 — Audit d'éligibilité
+## Step 1 — Eligibility audit
 
-Exécution **dans le système invité**, sans impact.
+Run **inside the guest operating system**, with no impact.
 
-### Invité Windows
+### Windows guest
 
 ```powershell
 .\scripts\windows\Test-UefiReadiness.ps1
 ```
 
-### Invité Linux
+### Linux guest
 
 ```bash
 sudo ./scripts/linux/check-uefi-readiness.sh
 ```
 
-**Point de contrôle n°1 :** le script doit se terminer par un verdict d'éligibilité et un code retour 0.
+**Control point 1:** the script must finish with an eligibility verdict and exit code 0.
 
-| Résultat | Décision |
+| Result | Decision |
 |---|---|
-| Éligible (code 0) | Poursuivre à l'étape 2 |
-| Non éligible (code 1) | **Arrêt.** Traiter les points en échec ou escalader. Ne pas poursuivre. |
+| Eligible (exit code 0) | Proceed to step 2 |
+| Not eligible (exit code 1) | **Stop.** Resolve the failing checks or escalate. Do not proceed. |
 
-## Étape 2 — Conversion du disque invité
+## Step 2 — Guest disk conversion
 
-Exécution **dans le système invité**. Le système reste en fonctionnement, sans coupure de service.
+Run **inside the guest operating system**. The system stays up; there is no service outage.
 
-### Invité Windows
+### Windows guest
 
 ```powershell
 .\scripts\windows\Convert-WindowsToUefi.ps1 -DiskNumber 0
 ```
 
-Le script demande confirmation. En automatisation, ajouter `-Force`. Pour simuler sans écrire : `-WhatIf`.
+The script prompts for confirmation. For automation, add `-Force`. To simulate without writing: `-WhatIf`.
 
-### Invité Linux
+### Linux guest
 
-Simulation d'abord, systématiquement :
+Always simulate first:
 
 ```bash
 sudo ./scripts/linux/convert-linux-to-uefi.sh --disk /dev/sda
 ```
 
-Puis exécution réelle :
+Then run for real:
 
 ```bash
 sudo ./scripts/linux/convert-linux-to-uefi.sh --disk /dev/sda --confirm
 ```
 
-Le script demande une confirmation interactive (`yes`). En automatisation, ajouter `--yes`.
+The script asks for an interactive confirmation (`yes`). For automation, add `--yes`.
 
-**Point de contrôle n°2 :** la conversion doit se terminer sans erreur.
+**Control point 2:** the conversion must complete without error.
 
-- Windows : vérifier `Get-Disk | Select-Object Number, PartitionStyle` → doit afficher `GPT`.
-- Linux : vérifier `parted -s /dev/sda print` → doit afficher `Partition Table: gpt`.
+- Windows: check `Get-Disk | Select-Object Number, PartitionStyle` → must show `GPT`.
+- Linux: check `parted -s /dev/sda print` → must show `Partition Table: gpt`.
 
-> **Ne pas laisser la machine dans cet état intermédiaire.** Le disque est converti mais le firmware ne l'est pas encore. Enchaîner immédiatement sur l'étape 3.
+> **Do not leave the machine in this intermediate state.** The disk is converted but the firmware is not yet. Move straight on to step 3.
 
-## Étape 3 — Arrêt de la machine virtuelle
+## Step 3 — Shutting down the virtual machine
 
-Arrêt propre depuis le système invité ou la console de l'hyperviseur.
+Clean shutdown from the guest or from the hypervisor console.
 
 ```powershell
-Stop-Computer          # invité Windows
+Stop-Computer          # Windows guest
 ```
 ```bash
-sudo shutdown -h now   # invité Linux
+sudo shutdown -h now   # Linux guest
 ```
 
-Attendre la confirmation d'extinction complète côté hyperviseur avant de poursuivre.
+Wait for confirmation of complete power-off on the hypervisor side before proceeding.
 
-## Étape 4 — Bascule du firmware
+## Step 4 — Firmware switch
 
-**C'est ici que débute l'interruption de service.**
+**This is where the service interruption begins.**
 
 ### VMware
 
@@ -218,91 +218,91 @@ Attendre la confirmation d'extinction complète côté hyperviseur avant de pour
 .\scripts\vmware\Set-VMFirmware.ps1 -VMName "srv-app01" -Firmware efi
 ```
 
-Le script refuse de s'exécuter si la VM n'est pas éteinte : c'est un comportement attendu, ne pas contourner.
+The script refuses to run if the VM is not powered off: this is expected behavior, do not work around it.
 
 ### Hyper-V
 
-Rappel : sous Hyper-V le firmware n'est pas modifiable. Le script crée une **nouvelle VM Génération 2** et conserve la VM d'origine renommée `<nom>-gen1-legacy`.
+Reminder: under Hyper-V the firmware cannot be changed. The script creates a **new Generation 2 VM** and retains the original VM renamed `<name>-gen1-legacy`.
 
 ```powershell
 .\scripts\hyperv\Convert-Gen1ToGen2.ps1 -SourceVMName "srv-app01" -OSType Windows
 ```
 
-Pour un invité Linux :
+For a Linux guest:
 
 ```powershell
 .\scripts\hyperv\Convert-Gen1ToGen2.ps1 -SourceVMName "srv-web01" -OSType Linux
 ```
 
-Si le noyau Linux n'est pas signé, ajouter `-DisableSecureBoot`.
+If the Linux kernel is unsigned, add `-DisableSecureBoot`.
 
-**Point de contrôle n°3 :**
+**Control point 3:**
 
-- VMware : `(Get-VM "srv-app01").ExtensionData.Config.Firmware` → doit renvoyer `efi`.
-- Hyper-V : `Get-VM "srv-app01" | Select-Object Name, Generation` → doit renvoyer `2`.
+- VMware: `(Get-VM "srv-app01").ExtensionData.Config.Firmware` → must return `efi`.
+- Hyper-V: `Get-VM "srv-app01" | Select-Object Name, Generation` → must return `2`.
 
-## Étape 5 — Redémarrage et validation
+## Step 5 — Reboot and validation
 
-Démarrer la machine virtuelle, puis exécuter **dans l'invité** :
+Start the virtual machine, then run **inside the guest**:
 
-### Invité Windows
+### Windows guest
 
 ```powershell
 .\scripts\windows\Test-UefiMigrationResult.ps1
 ```
 
-### Invité Linux
+### Linux guest
 
 ```bash
 sudo ./scripts/linux/verify-uefi-migration.sh
 ```
 
-**Point de contrôle n°4 — décision go / no-go :**
+**Control point 4 — go / no-go decision:**
 
-| Résultat | Décision |
+| Result | Decision |
 |---|---|
-| Migration confirmée (code 0) | Poursuivre à l'étape 6 |
-| Migration non confirmée (code 1) | **Retour arrière** (section 7) |
+| Migration confirmed (exit code 0) | Proceed to step 6 |
+| Migration not confirmed (exit code 1) | **Roll back** (section 7) |
 
-> Ce contrôle est obligatoire. Une machine peut démarrer sur une entrée d'amorçage obsolète et paraître saine tout en étant à un redémarrage de la panne. Le fait que la machine « démarre » ne vaut pas validation.
+> This check is mandatory. A machine can boot from a stale boot entry and appear healthy while still being one reboot away from failing. The fact that the machine "starts" does not constitute validation.
 
-## Étape 6 — Clôture
+## Step 6 — Closure
 
-1. Réactiver BitLocker le cas échéant :
+1. Re-enable BitLocker where applicable:
 
 ```powershell
 Resume-BitLocker -MountPoint "C:"
 ```
 
-2. Faire valider le service rendu par le responsable applicatif.
-3. **Après période d'observation** (recommandé : 5 à 7 jours ouvrés), supprimer les éléments de secours :
+2. Have the service confirmed by the application owner.
+3. **After an observation period** (recommended: 5 to 7 working days), delete the fallback artifacts:
 
 ```powershell
 # VMware
 Get-Snapshot -VM "srv-app01" -Name "pre-uefi-migration" | Remove-Snapshot -Confirm:$false
 
-# Hyper-V : suppression de la VM d'origine conservée
+# Hyper-V: removal of the retained original VM
 Remove-VM -Name "srv-app01-gen1-legacy" -Force
 ```
 
-> Cette suppression est une **décision humaine explicite**. Aucun script ne la réalise automatiquement. Ne pas l'exécuter avant validation applicative formelle.
+> This deletion is an **explicit human decision**. No script performs it automatically. Do not run it before formal application validation.
 
-# Procédure hors ligne — Windows Server 2012 R2 et 2016
+# Offline procedure — Windows Server 2012 R2 and 2016
 
-Ces versions ne disposent pas de l'outil `MBR2GPT.exe`. La conversion s'effectue depuis un environnement d'amorçage externe.
+These versions do not include the `MBR2GPT.exe` tool. The conversion is performed from an external boot environment.
 
-## Prérequis supplémentaires
+## Additional prerequisites
 
-- Image ISO **WinPE 10.0.15063 ou supérieure** (ADK Windows 10 1703+ ou Windows Server 2019+), accessible depuis l'hyperviseur.
-- Accès console à la machine virtuelle.
+- **WinPE 10.0.15063 or later** ISO image (Windows 10 1703+ or Windows Server 2019+ ADK), reachable from the hypervisor.
+- Console access to the virtual machine.
 
-## Déroulement
+## Procedure
 
-1. Réaliser les étapes de préparation (section 4) — instantané inclus, sans exception.
-2. Arrêter la machine virtuelle.
-3. Monter l'ISO WinPE et configurer l'amorçage sur le lecteur optique.
-4. Démarrer sur WinPE et ouvrir l'invite de commandes.
-5. Identifier le disque système :
+1. Carry out the preparation steps (section 4) — including the snapshot, without exception.
+2. Shut down the virtual machine.
+3. Mount the WinPE ISO and set the boot order to the optical drive.
+4. Boot into WinPE and open the command prompt.
+5. Identify the system disk:
 
 ```
 diskpart
@@ -311,59 +311,59 @@ list volume
 exit
 ```
 
-6. Valider puis convertir — **sans `/allowFullOS`**, réservé à un système démarré :
+6. Validate then convert — **without `/allowFullOS`**, which is reserved for a running system:
 
 ```
 mbr2gpt /validate /disk:0
 mbr2gpt /convert /disk:0
 ```
 
-7. Arrêter la machine, démonter l'ISO, rétablir l'ordre d'amorçage sur le disque.
-8. Reprendre la procédure nominale à l'**étape 4** (bascule du firmware).
+7. Shut down, unmount the ISO, restore the boot order to the disk.
+8. Resume the nominal procedure at **step 4** (firmware switch).
 
-## Erreurs fréquentes en mode WinPE
+## Common errors in WinPE mode
 
 | Message | Cause | Action |
 |---|---|---|
-| `Disk layout validation failed` | Plus de 3 partitions primaires, ou disque dynamique | Nettoyer les partitions superflues ou convertir le disque en basique |
-| `Cannot find OS partition` | Mauvais numéro de disque | Revérifier avec `diskpart` / `list disk` |
-| `Not enough free space` | Espace non alloué insuffisant pour l'ESP et la MSR | Réduire une partition existante d'environ 100 Mo |
+| `Disk layout validation failed` | More than 3 primary partitions, or a dynamic disk | Clean up surplus partitions or convert the disk to basic |
+| `Cannot find OS partition` | Wrong disk number | Re-check with `diskpart` / `list disk` |
+| `Not enough free space` | Insufficient unallocated space for the ESP and MSR | Shrink an existing partition by about 100 MB |
 
-# Procédures de retour arrière
+# Rollback procedures
 
-## Arbre de décision
+## Decision tree
 
-| Situation | Procédure |
+| Situation | Procedure |
 |---|---|
-| Firmware basculé, **disque encore en MBR** | Rebasculer le firmware (§ 7.1) |
-| Disque converti en GPT, VM ne démarre pas, plateforme VMware | Restaurer l'instantané (§ 7.3) |
-| Disque converti en GPT, VM ne démarre pas, plateforme Hyper-V | Restaurer la VM Gen 1 (§ 7.2), puis instantané si insuffisant (§ 7.3) |
-| Partition ESP créée à tort, système Linux amorçable | Restaurer la table de partitions (§ 7.4) |
-| Toute autre situation | **Restaurer l'instantané** (§ 7.3) |
+| Firmware switched, **disk still on MBR** | Switch the firmware back (§ 7.1) |
+| Disk converted to GPT, VM does not boot, VMware platform | Restore the snapshot (§ 7.3) |
+| Disk converted to GPT, VM does not boot, Hyper-V platform | Restore the Gen 1 VM (§ 7.2), then the snapshot if that is not enough (§ 7.3) |
+| ESP partition created in error, Linux system still bootable | Restore the partition table (§ 7.4) |
+| Any other situation | **Restore the snapshot** (§ 7.3) |
 
-> **Principe :** l'instantané pris en étape 0 est la seule voie de retour arrière réellement complète. En cas de doute, ne pas chercher à réparer — restaurer.
+> **Principle:** the snapshot taken at step 0 is the only genuinely complete rollback path. When in doubt, do not attempt to repair — restore.
 
-## 7.1 Rebascule du firmware (VMware)
+## 7.1 Switching the firmware back (VMware)
 
-Applicable **uniquement** si le disque invité n'a pas encore été converti.
+Applies **only** if the guest disk has not yet been converted.
 
 ```powershell
 .\scripts\vmware\Set-VMFirmware.ps1 -VMName "srv-app01" -Firmware bios
 ```
 
-## 7.2 Restauration de la VM Génération 1 (Hyper-V)
+## 7.2 Restoring the Generation 1 VM (Hyper-V)
 
-La VM d'origine n'a été ni modifiée ni supprimée : elle a seulement été renommée.
+The original VM was neither modified nor deleted: it was only renamed.
 
 ```powershell
 .\scripts\hyperv\Restore-Gen1VM.ps1 -VMName "srv-app01" -Start
 ```
 
-Le script arrête et supprime la VM Génération 2 (les fichiers VHDX sont conservés, simplement détachés), puis restaure le nom d'origine de la VM de secours. Il vérifie l'existence et la génération de la VM de secours **avant** toute suppression : une VM de secours absente interrompt l'opération.
+The script stops and removes the Generation 2 VM (VHDX files are preserved, merely detached), then restores the original name of the fallback VM. It verifies that the fallback VM exists and is Generation 1 **before** any removal: a missing fallback VM aborts the operation.
 
-> **Limite :** si le disque invité avait déjà été converti en GPT, la VM Génération 1 (BIOS) ne saura pas non plus démarrer dessus. Enchaîner alors sur § 7.3.
+> **Limitation:** if the guest disk had already been converted to GPT, the Generation 1 (BIOS) VM will not be able to boot from it either. In that case continue to § 7.3.
 
-## 7.3 Restauration de l'instantané
+## 7.3 Restoring the snapshot
 
 ### VMware
 
@@ -377,135 +377,135 @@ Start-VM -VM "srv-app01"
 
 ```powershell
 Get-VMSnapshot -VMName "srv-app01"
-Restore-VMSnapshot -VMName "srv-app01" -Name "<nom du point de contrôle>" -Confirm:$false
+Restore-VMSnapshot -VMName "srv-app01" -Name "<checkpoint name>" -Confirm:$false
 Start-VM -Name "srv-app01"
 ```
 
-## 7.4 Restauration de la table de partitions (Linux)
+## 7.4 Restoring the partition table (Linux)
 
-Le script de conversion sauvegarde deux éléments sous `/root` avant toute écriture :
+The conversion script saves two artifacts under `/root` before any write:
 
-| Fichier | Contenu |
+| File | Content |
 |---|---|
-| `<disque>-partition-table-<horodatage>.backup` | Sauvegarde `sgdisk`, rejouable |
-| `<disque>-original-<horodatage>.mbr` | Copie brute du premier secteur — seul exemplaire du MBR d'origine |
+| `<disk>-partition-table-<timestamp>.backup` | `sgdisk` backup, replayable |
+| `<disk>-original-<timestamp>.mbr` | Raw copy of the first sector — the only copy of the original MBR |
 
-Lister puis restaurer :
+List, then restore:
 
 ```bash
 sudo ./scripts/linux/restore-partition-table.sh --disk /dev/sda --list
 sudo ./scripts/linux/restore-partition-table.sh --disk /dev/sda --confirm
 ```
 
-> **Ce que cette opération fait et ne fait pas.** Elle supprime les entrées de partition ajoutées après la sauvegarde, typiquement l'ESP. Elle **ne reconvertit pas** le disque en MBR : la sauvegarde `sgdisk` d'un disque MBR enregistre une représentation GPT de la disposition, donc son rejeu produit du GPT. Elle ne défait pas non plus la ligne `/etc/fstab`, l'installation de GRUB-EFI ni la régénération de l'initramfs. **Pour un retour arrière complet, restaurer l'instantané.**
+> **What this operation does and does not do.** It removes partition entries added after the backup, typically the ESP. It **does not** convert the disk back to MBR: an `sgdisk` backup of an MBR disk records a GPT representation of the layout, so replaying it produces GPT. Nor does it undo the `/etc/fstab` line, the GRUB-EFI installation or the initramfs rebuild. **For a complete rollback, restore the snapshot.**
 
-# Diagnostic des incidents
+# Incident diagnosis
 
-## La machine ne démarre plus (« no bootable device » / écran noir)
+## The machine no longer boots ("no bootable device" / black screen)
 
-Causes par ordre de probabilité décroissante :
+Causes in decreasing order of likelihood:
 
-| # | Cause | Vérification | Correction |
+| # | Cause | Check | Correction |
 |---|---|---|---|
-| 1 | Disque non réellement converti en GPT | Depuis un live-CD : `parted /dev/sda print` | Reprendre l'étape 2, ou restaurer l'instantané |
-| 2 | Partition ESP sans le bon type | `sgdisk -p /dev/sda` → type `EF00` attendu | Corriger le type ou restaurer |
-| 3 | Ordre d'amorçage incorrect | VMware : options de démarrage de la VM. Hyper-V : `Get-VMFirmware -VMName <nom> \| Select BootOrder` | Repositionner le disque en premier |
-| 4 | Secure Boot activé prématurément | Console firmware de la VM | Désactiver le Secure Boot, valider l'amorçage, puis le réactiver |
+| 1 | Disk not actually converted to GPT | From a live CD: `parted /dev/sda print` | Redo step 2, or restore the snapshot |
+| 2 | ESP partition with the wrong type | `sgdisk -p /dev/sda` → type `EF00` expected | Correct the type or restore |
+| 3 | Incorrect boot order | VMware: VM boot options. Hyper-V: `Get-VMFirmware -VMName <name> \| Select BootOrder` | Move the disk back to first position |
+| 4 | Secure Boot enabled prematurely | VM firmware console | Disable Secure Boot, validate the boot, then re-enable it |
 
-## Le script d'audit refuse la machine
+## The audit script rejects the machine
 
-| Message | Signification | Action |
+| Message | Meaning | Action |
 |---|---|---|
-| `mbr2gpt.exe not present on this OS` | Server 2012 R2 ou 2016 | Basculer sur la procédure hors ligne (section 6) |
-| OS `past end of support` | Server 2008 R2 ou antérieur, RHEL 5/6 | **Ne pas convertir.** Escalader vers l'architecte |
-| `partitions detected, MBR2GPT allows at most 3` | Trop de partitions primaires | Nettoyer les partitions superflues |
-| `Not enough free space to create an ESP` | Espace non alloué insuffisant (Linux) | Réduire une partition existante |
+| `mbr2gpt.exe not present on this OS` | Server 2012 R2 or 2016 | Switch to the offline procedure (section 6) |
+| OS `past end of support` | Server 2008 R2 or earlier, RHEL 5/6 | **Do not convert.** Escalate to the architect |
+| `partitions detected, MBR2GPT allows at most 3` | Too many primary partitions | Clean up surplus partitions |
+| `Not enough free space to create an ESP` | Insufficient unallocated space (Linux) | Shrink an existing partition |
 
-## Incidents Linux spécifiques
+## Linux-specific incidents
 
-| Symptôme | Cause | Correction |
+| Symptom | Cause | Correction |
 |---|---|---|
-| `/boot/efi is not a mountpoint` | ESP non montée avant `grub-install` | Vérifier `mount \| grep efi` et `/etc/fstab` |
-| GRUB s'affiche mais le noyau ne démarre pas | initramfs incomplet | `update-initramfs -u -k all` ou `dracut -f --regenerate-all` |
-| Aucune entrée dans `efibootmgr` | Firmware émulé ignorant les écritures NVRAM | Recréer l'entrée manuellement et contrôler l'ordre d'amorçage côté hyperviseur |
+| `/boot/efi is not a mountpoint` | ESP not mounted before `grub-install` | Check `mount \| grep efi` and `/etc/fstab` |
+| GRUB appears but the kernel does not boot | Incomplete initramfs | `update-initramfs -u -k all` or `dracut -f --regenerate-all` |
+| No entry in `efibootmgr` | Emulated firmware ignoring NVRAM writes | Recreate the entry manually and check the boot order on the hypervisor side |
 
-Recréation manuelle d'une entrée d'amorçage :
+Manually recreating a boot entry:
 
 ```bash
 efibootmgr -c -d /dev/sda -p 1 -L "GRUB" -l '\EFI\<distribution>\grubx64.efi'
 ```
 
-## Critères d'escalade
+## Escalation criteria
 
-Escalader vers le niveau supérieur ou l'architecte dans les cas suivants :
+Escalate to the next level or to the architect in the following cases:
 
-- Machine non démarrable après restauration de l'instantané.
-- Topologie non prévue découverte en cours d'intervention (RAID logiciel, LVM sur `/boot`, chiffrement de volume).
-- Système d'exploitation classé **INTERDIT** dans la matrice d'éligibilité.
-- Doute sur l'intégrité des données après conversion.
+- Machine unbootable after the snapshot has been restored.
+- Unanticipated topology discovered mid-intervention (software RAID, LVM on `/boot`, volume encryption).
+- Operating system classified **PROHIBITED** in the eligibility matrix.
+- Any doubt about data integrity after conversion.
 
-# Fiche de suivi d'intervention
+# Intervention record sheet
 
-À compléter pour chaque machine traitée et à archiver comme preuve d'exécution.
+To be completed for each machine processed and archived as evidence of execution.
 
-| Rubrique | Valeur |
+| Item | Value |
 |---|---|
-| Nom de la machine virtuelle | |
-| Hyperviseur (VMware / Hyper-V) | |
-| Système invité et version | |
-| Verdict d'éligibilité | |
-| Procédure appliquée (nominale / hors ligne) | |
-| Date et heure de début | |
-| Intervenant | |
-| Numéro de changement (ITSM) | |
+| Virtual machine name | |
+| Hypervisor (VMware / Hyper-V) | |
+| Guest OS and version | |
+| Eligibility verdict | |
+| Procedure applied (nominal / offline) | |
+| Start date and time | |
+| Operator | |
+| Change number (ITSM) | |
 
-## Points de contrôle
+## Control points
 
-| Point de contrôle | Résultat | Heure | Visa |
+| Control point | Result | Time | Initials |
 |---|---|---|---|
-| PC1 — Audit d'éligibilité | ☐ OK ☐ KO | | |
-| Instantané créé (nom) | | | |
-| PC2 — Conversion du disque | ☐ OK ☐ KO | | |
-| PC3 — Bascule du firmware | ☐ OK ☐ KO | | |
-| PC4 — Validation post-migration | ☐ OK ☐ KO | | |
-| Validation applicative | ☐ OK ☐ KO | | |
+| CP1 — Eligibility audit | ☐ OK ☐ NOK | | |
+| Snapshot created (name) | | | |
+| CP2 — Disk conversion | ☐ OK ☐ NOK | | |
+| CP3 — Firmware switch | ☐ OK ☐ NOK | | |
+| CP4 — Post-migration validation | ☐ OK ☐ NOK | | |
+| Application validation | ☐ OK ☐ NOK | | |
 
-## Clôture
+## Closure
 
-| Rubrique | Valeur |
+| Item | Value |
 |---|---|
-| Date et heure de fin | |
-| Durée d'interruption réelle | |
-| Retour arrière effectué | ☐ Non ☐ Oui — motif : |
-| Instantané supprimé le | |
-| VM de secours supprimée le (Hyper-V) | |
+| End date and time | |
+| Actual outage duration | |
+| Rollback performed | ☐ No ☐ Yes — reason: |
+| Snapshot deleted on | |
+| Fallback VM deleted on (Hyper-V) | |
 | Observations | |
 
-# Annexe — Aide-mémoire des commandes
+# Appendix — Command reference
 
-## Audit (sans impact, exécutable à tout moment)
+## Audit (no impact, may be run at any time)
 
 ```powershell
-.\scripts\vmware\Get-VMFirmwareReport.ps1 -VMName "*"       # parc VMware
-.\scripts\hyperv\Get-VMGenerationReport.ps1                 # parc Hyper-V
-.\scripts\windows\Test-UefiReadiness.ps1                    # invité Windows
+.\scripts\vmware\Get-VMFirmwareReport.ps1 -VMName "*"       # VMware estate
+.\scripts\hyperv\Get-VMGenerationReport.ps1                 # Hyper-V estate
+.\scripts\windows\Test-UefiReadiness.ps1                    # Windows guest
 ```
 ```bash
-sudo ./scripts/linux/check-uefi-readiness.sh                # invité Linux
+sudo ./scripts/linux/check-uefi-readiness.sh                # Linux guest
 ```
 
-## Vérifications manuelles rapides
+## Quick manual checks
 
-### Invité Windows
+### Windows guest
 
 ```powershell
-$env:firmware_type                                  # doit renvoyer UEFI
-Get-Disk | Select-Object Number, PartitionStyle     # doit renvoyer GPT
-Confirm-SecureBootUEFI                              # état du Secure Boot
-bcdedit /enum "{bootmgr}"                           # doit citer bootmgfw.efi
+$env:firmware_type                                  # must return UEFI
+Get-Disk | Select-Object Number, PartitionStyle     # must return GPT
+Confirm-SecureBootUEFI                              # Secure Boot state
+bcdedit /enum "{bootmgr}"                           # must reference bootmgfw.efi
 ```
 
-### Invité Linux
+### Linux guest
 
 ```bash
 [ -d /sys/firmware/efi ] && echo "UEFI" || echo "BIOS"
@@ -514,21 +514,21 @@ findmnt /boot/efi
 efibootmgr -v
 ```
 
-### Hyperviseur
+### Hypervisor
 
 ```powershell
 (Get-VM "srv-app01").ExtensionData.Config.Firmware              # VMware
 Get-VM "srv-app01" | Select-Object Name, Generation, State      # Hyper-V
 ```
 
-## Options communes aux scripts
+## Options common to the scripts
 
-| Option | Effet |
+| Option | Effect |
 |---|---|
-| `-WhatIf` | Simulation PowerShell, aucune écriture |
-| `-Force` | Supprime la demande de confirmation (automatisation) |
-| `--confirm` | Active l'exécution réelle des scripts Bash (sinon simulation) |
-| `--yes` | Supprime la confirmation interactive Bash (automatisation) |
-| `--list` | Liste les sauvegardes disponibles (restauration Linux) |
+| `-WhatIf` | PowerShell simulation, no writes |
+| `-Force` | Suppresses the confirmation prompt (automation) |
+| `--confirm` | Enables real execution of the Bash scripts (otherwise simulation) |
+| `--yes` | Suppresses the interactive Bash confirmation (automation) |
+| `--list` | Lists available backups (Linux restore) |
 
-> Par défaut, les scripts Bash fonctionnent en **simulation**. L'absence de `--confirm` n'est pas une erreur : c'est le comportement attendu pour une première exécution.
+> By default, the Bash scripts run in **simulation** mode. The absence of `--confirm` is not an error: it is the expected behavior for a first run.
