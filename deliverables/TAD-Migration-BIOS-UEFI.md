@@ -150,6 +150,49 @@ The Hyper-V path carries additional constraints that must be factored into the e
 - "Legacy Network Adapter" cards (Gen 1 only) have no Gen 2 equivalent and are replaced by synthetic adapters; **any static MAC address must be verified afterwards**.
 - The original VM is retained (renamed with the `-gen1-legacy` suffix) and is **never deleted automatically**. Its removal is an explicit human decision taken after validation.
 
+## Management capabilities gained on the hypervisor side
+
+Beyond the guest security features, the migration changes what can be done with the virtual machine itself. **These gains are strongly asymmetric between the two platforms, and the difference must not be flattened when building the business case.**
+
+Hyper-V Generation 1 virtual machines are constrained by emulated legacy hardware: the boot disk sits on an IDE controller, PXE requires a slow emulated adapter, and network adapters cannot be added while running. Moving to Generation 2 removes all of that. On VMware, by contrast, a BIOS virtual machine already boots from a paravirtual SCSI controller, already hot-adds network adapters and already resizes disks online — so switching to EFI changes very little in day-to-day operation and is essentially about unlocking capabilities that BIOS cannot address at all.
+
+### Hyper-V: Generation 1 to Generation 2
+
+| Management capability | Generation 1 (BIOS) | Generation 2 (UEFI) |
+|---|---|---|
+| Boot device | IDE controller only | **SCSI controller** (virtual disk or DVD), up to 4 controllers and 64 drives each |
+| Resizing the system volume | Offline only (boot disk on IDE) | **Online, while the VM is running** (VHDX on SCSI) |
+| Adding / removing a network adapter | VM shutdown required | **Hot-add and hot-remove supported** |
+| PXE / network deployment | Requires the emulated "Legacy Network Adapter" | **Standard synthetic adapter**, no legacy component |
+| System volume above 2 TB | Not addressable under MBR | **Supported** (GPT) |
+| Emulated device layer | Present (IDE, legacy NIC, legacy BIOS) | **Removed** — faster boot and installation, smaller attack surface, lower host overhead |
+| Virtual TPM | Not available | **Available**, enabling BitLocker and shielded VMs |
+| Boot order management | Fixed legacy device list (`Set-VMBios`) | Ordered, scriptable device list (`Set-VMFirmware -BootOrder`) |
+
+The two entries with the greatest day-to-day operational value are **online expansion of the system volume** and **hot-add of network adapters**: both remove a planned outage from routine work that is currently performed under a maintenance window.
+
+### VMware: BIOS to EFI
+
+| Management capability | BIOS firmware | EFI firmware |
+|---|---|---|
+| System volume above 2 TB | Not addressable under MBR | **Supported** (GPT) |
+| Virtual TPM | Not available | **Available** (ESXi 6.7 or later) |
+| Windows 11 and Server 2025 guests | Not supportable (TPM 2.0 required) | **Supported** |
+| Virtualization-based Security in the guest | Not available | **Available** (hardware version 14+, vSphere 6.7+) |
+| Secure Boot | Not available | **Available** (hardware version 13+) |
+| SCSI boot, hot-add of adapters, online disk growth | Already available | Unchanged — no gain, these are not BIOS limitations on this platform |
+| VM identity, UUID, backup jobs | — | Preserved: the VM object is reconfigured, not recreated |
+
+### Consequences for estate management
+
+Independently of the platform, the migration produces three effects at fleet level:
+
+- **A single provisioning baseline.** Once the estate is homogeneous, templates, golden images and automation stop having to handle two boot modes. Mixed BIOS/UEFI estates are a recurring source of deployment defects, because a template built for one mode fails silently on the other.
+- **Future guest support.** Recent operating systems increasingly assume UEFI. Remaining on BIOS progressively narrows the set of guests that can be deployed, and makes each future upgrade a firmware migration as well as an OS migration.
+- **Hardware version and generation alignment.** The migration is the natural point to bring the virtual hardware level up to the version required by Secure Boot and VBS, rather than performing a second disruptive pass later.
+
+> **Counterpart to be planned for.** On Hyper-V only, the gains above come at the cost of a new VM object: the Generation 2 machine is not the Generation 1 machine reconfigured. Backup jobs, monitoring, inventory and any automation keyed on the VM identifier must be verified after migration. On VMware this cost does not exist, since the VM object is preserved.
+
 # Guest operating system compatibility matrix
 
 Verdict legend:
