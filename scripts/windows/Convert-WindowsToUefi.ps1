@@ -46,7 +46,23 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
 
 $mbr2gpt = Join-Path $env:WINDIR 'System32\mbr2gpt.exe'
 if (-not (Test-Path -LiteralPath $mbr2gpt)) {
-    throw "mbr2gpt.exe not found at $mbr2gpt. This script requires Windows 10 1703+ / Windows Server 2016+."
+    # MBR2GPT shipped with Windows 10 1703 (build 15063). Server 2016 is built on
+    # the 1607 codebase (14393) and does not include it, nor does Server 2012 R2.
+    $build = [System.Environment]::OSVersion.Version.Build
+    throw @"
+mbr2gpt.exe not found at $mbr2gpt (this OS is build $build).
+
+The tool shipped with Windows 10 1703 / build 15063. Windows Server 2016
+(build 14393) and Server 2012 R2 (9600) do not include it.
+
+To convert this guest, boot it from WinPE 10.0.15063 or later media and run:
+    mbr2gpt /validate /disk:0
+    mbr2gpt /convert /disk:0
+(no /allowFullOS - that switch is only for a running OS)
+
+Do not copy mbr2gpt.exe from a newer Windows: it depends on the servicing
+stack of the OS it ships with. See docs/07-os-support-matrix.md.
+"@
 }
 
 if (-not (Test-Path -LiteralPath $LogDirectory)) {

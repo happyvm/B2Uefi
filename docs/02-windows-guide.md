@@ -1,13 +1,23 @@
 # Windows guide: guest MBR → GPT/UEFI conversion
 
-Applies to Windows 10/11 and Windows Server 2012 R2+ running as a VM (VMware or Hyper-V), with a system disk currently in BIOS/MBR mode.
+Applies to Windows 10/11 and Windows Server running as a VM (VMware or Hyper-V), with a system disk currently in BIOS/MBR mode.
+
+**Check the [OS support matrix](07-os-support-matrix.md) first.** Which route you take depends on the version:
+
+| Guest | Route |
+|---|---|
+| Windows 10 1703+, Server 2019 / 2022 / 2025 | This guide, conversion from the running OS |
+| Server 2012 R2, Server 2016 | Same steps, but the conversion must run from **WinPE 1703+ media** — see below |
+| Server 2008 R2 and earlier | No supported path. Rebuild on a current OS. |
 
 ## Principle
 
-The native `MBR2GPT.exe` tool (present in `C:\Windows\System32` since Windows 10 1703) converts the partition table **in place**, without data loss, and prepares the system partitions needed for UEFI boot (ESP, MSR). It can run:
+The native `MBR2GPT.exe` tool converts the partition table **in place**, without data loss, and prepares the system partitions needed for UEFI boot (ESP, MSR). It can run:
 
-- from the Windows Recovery Environment (WinRE), without `/allowFullOS`;
+- from the Windows Recovery Environment or WinPE, without `/allowFullOS`;
 - from the fully booted OS, with `/allowFullOS` (the main use case for a production VM).
+
+`MBR2GPT.exe` shipped with **Windows 10 version 1703 (build 15063)**. Windows Server 2016 is built on the 1607 codebase (build 14393) and **does not include the tool**; neither does Server 2012 R2. For those, boot the VM from WinPE 10.0.15063+ media and run the conversion there without `/allowFullOS`. Do not copy the binary from a newer Windows — it depends on the servicing stack it ships with.
 
 **Important**: `MBR2GPT` does not change the VM's firmware. After conversion, the OS still boots in BIOS mode momentarily (the VM firmware hasn't changed). It's only after switching the firmware on the hypervisor side (VMware) or recreating the VM as Gen 2 (Hyper-V) that the next boot will actually use UEFI.
 
@@ -57,17 +67,20 @@ Stop-Computer  # or a clean shutdown from vCenter / Hyper-V Manager
 ### 5. Reboot and validate
 
 - The VM should boot straight into the Windows login screen (no "no bootable device" error/black screen).
-- Verify the effective boot mode:
+- Run the validation script inside the guest:
+
+```powershell
+.\scripts\windows\Test-UefiMigrationResult.ps1
+```
+
+It confirms the four things that must all be true — the firmware is UEFI, the system disk is GPT, an EFI System Partition exists, and the boot manager points at `bootmgfw.efi` — and exits non-zero if any of them fails. It also reminds you to re-enable BitLocker if it was suspended.
+
+Manual equivalents, if you prefer to check by hand:
 
 ```powershell
 $env:firmware_type      # should return "UEFI"
-Confirm-SecureBootUEFI   # $true if Secure Boot is enabled (optional, requires having enabled the option on the hypervisor side)
-```
-
-- Verify the disk style:
-
-```powershell
 Get-Disk | Select-Object Number, PartitionStyle
+Confirm-SecureBootUEFI   # $true if Secure Boot is enabled (optional, requires having enabled the option on the hypervisor side)
 ```
 
 ## Special cases

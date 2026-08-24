@@ -65,11 +65,22 @@ The script:
 
 ### 6. Validate
 
+On the host:
+
 ```powershell
 Get-VM "srv-app01" | Select-Object Name, Generation, State
 ```
 
-Then follow the validation steps in [02-windows-guide.md](02-windows-guide.md) / [03-linux-guide.md](03-linux-guide.md) inside the guest.
+Then inside the guest, once it has booted — this is the check that actually proves the migration worked:
+
+```powershell
+.\scripts\windows\Test-UefiMigrationResult.ps1   # Windows guest
+```
+```bash
+sudo ./scripts/linux/verify-uefi-migration.sh    # Linux guest
+```
+
+If validation fails, roll back with `.\scripts\hyperv\Restore-Gen1VM.ps1 -VMName "srv-app01"` (see [06-troubleshooting-rollback.md](06-troubleshooting-rollback.md)).
 
 ### 7. Final cleanup (after validation, manual)
 

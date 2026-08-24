@@ -2,6 +2,8 @@
 
 Applies to mainstream distributions (Debian/Ubuntu, RHEL/CentOS/Alma/Rocky, SUSE) running as a VM (VMware or Hyper-V), with a system disk currently in BIOS/MBR mode with legacy GRUB.
 
+**Check the [OS support matrix](07-os-support-matrix.md) first.** RHEL 8/9/10 (and the equivalent Alma/Rocky releases) convert cleanly. RHEL 7 works but is out of full support. RHEL 5 and 6 have no viable path and should be rebuilt, not converted.
+
 ## Principle
 
 Unlike Windows, Linux has no single "official" tool equivalent to `MBR2GPT`. Conversion is done through three separate operations:
@@ -52,6 +54,14 @@ sudo shutdown -h now
 - **Hyper-V**: see [05-hyperv-guide.md](05-hyperv-guide.md) — Secure Boot for Linux must use the `MicrosoftUEFICertificateAuthority` template (not `MicrosoftWindows`), or be disabled if the kernel/shim isn't signed.
 
 ### 5. Reboot and validate
+
+```bash
+sudo ./scripts/linux/verify-uefi-migration.sh
+```
+
+It confirms everything that must be true for the migration to be complete — booted in UEFI, disk is GPT, an ESP exists and is mounted, `/etc/fstab` persists it, a GRUB EFI binary is installed, and a firmware boot entry exists — and exits non-zero if any check fails.
+
+Manual equivalents, if you prefer to check by hand:
 
 ```bash
 [ -d /sys/firmware/efi ] && echo "Booted in UEFI" || echo "Still in BIOS"

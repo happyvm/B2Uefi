@@ -22,11 +22,15 @@ These two steps are **related but asymmetric**:
 The correct order is therefore always:
 
 ```
+0. Take a snapshot/checkpoint you can actually restore
 1. Prepare the guest disk (MBR->GPT conversion + UEFI bootloader)  [OS still running in BIOS mode]
 2. Shut down the VM
 3. Switch the VM firmware to EFI on the hypervisor side
 4. Reboot -> the VM now boots in UEFI
+5. Validate from inside the guest before declaring victory
 ```
+
+Step 0 and step 5 are not optional ceremony. Step 0 is the only genuine rollback path once the disk has been converted — there is no safe automated GPT→MBR return. Step 5 is what distinguishes "the VM booted" from "the VM booted the way we intended": a VM can come up on a stale boot entry and look healthy while still being one reboot away from failing.
 
 ## Fundamental difference: VMware vs. Hyper-V
 
@@ -41,9 +45,12 @@ The correct order is therefore always:
 | Folder | Content |
 |---|---|
 | `docs/` | Detailed guides per platform and per guest OS |
-| `scripts/windows/` | Compatibility check + MBR→GPT conversion (`MBR2GPT.exe` wrapper) for the Windows guest OS |
-| `scripts/linux/` | Compatibility check + MBR→GPT conversion + GRUB-EFI reinstallation for the Linux guest OS |
-| `scripts/vmware/` | PowerCLI scripts to audit and switch the firmware of VMware VMs |
-| `scripts/hyperv/` | PowerShell scripts to audit Generation 1 VMs and automate their migration to Generation 2 |
+| `scripts/windows/` | Compatibility check, MBR→GPT conversion (`MBR2GPT.exe` wrapper), and post-migration validation for the Windows guest OS |
+| `scripts/linux/` | Compatibility check, MBR→GPT conversion + GRUB-EFI reinstallation, post-migration validation, and partition-table restore for the Linux guest OS |
+| `scripts/vmware/` | PowerCLI scripts to snapshot, audit and switch the firmware of VMware VMs |
+| `scripts/hyperv/` | PowerShell scripts to checkpoint, audit Generation 1 VMs, migrate them to Generation 2, and roll that migration back |
+| `tests/` | Convention tests (Pester + bash) run in CI; they never touch real infrastructure |
+
+Before planning anything, check the guest OS against the [support matrix](07-os-support-matrix.md): Windows Server 2008 R2 and earlier, and RHEL 6 and earlier, have no supported conversion path and should be rebuilt rather than migrated.
 
 Next: [docs/01-prerequisites.md](01-prerequisites.md).
