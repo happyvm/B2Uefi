@@ -34,11 +34,25 @@ if (-not $currentPrincipal.IsInRole([Security.Principal.WindowsBuiltInRole]::Adm
     Write-Warning "This script should be run as Administrator for reliable results (mbr2gpt, Get-Tpm)."
 }
 
+# MBR2GPT shipped with Windows 10 1703 / build 15063. Older builds - notably
+# Server 2016 (14393) and Server 2012 R2 (9600) - can still be converted, but
+# only from WinPE 1703+ media. Report that route instead of a bare failure.
 $build = [System.Environment]::OSVersion.Version.Build
 if ($build -ge 15063) {
     Add-Result -Check 'Windows build' -Status 'OK' -Detail "Build $build (>= 15063 required for native MBR2GPT)"
 } else {
-    Add-Result -Check 'Windows build' -Status 'FAIL' -Detail "Build $build is too old, native MBR2GPT is unavailable"
+    $osName = switch ($build) {
+        14393   { 'Windows Server 2016 / Windows 10 1607' }
+        9600    { 'Windows Server 2012 R2 / Windows 8.1' }
+        9200    { 'Windows Server 2012 / Windows 8' }
+        default { "build $build" }
+    }
+    $convertible = $build -ge 9200
+    if ($convertible) {
+        Add-Result -Check 'Windows build' -Status 'WARNING' -Detail "$osName does not ship MBR2GPT (needs build >= 15063). Conversion is still possible from WinPE 1703+ media - see docs/07-os-support-matrix.md"
+    } else {
+        Add-Result -Check 'Windows build' -Status 'FAIL' -Detail "$osName is past end of support and has no supported UEFI conversion path - rebuild instead (docs/07-os-support-matrix.md)"
+    }
 }
 
 try {
@@ -97,7 +111,10 @@ if (Test-Path -LiteralPath $mbr2gpt) {
         Add-Result -Check 'MBR2GPT /validate' -Status 'FAIL' -Detail "Exit code $LASTEXITCODE - see log above"
     }
 } else {
-    Add-Result -Check 'MBR2GPT /validate' -Status 'FAIL' -Detail "mbr2gpt.exe not found at $mbr2gpt (requires Windows 10 1703+ / Windows Server 2016+)"
+    # Reported as a failure on purpose: the in-place path this repository
+    # automates is genuinely unavailable here. The WinPE route still exists and
+    # the detail line points at it.
+    Add-Result -Check 'MBR2GPT /validate' -Status 'FAIL' -Detail "mbr2gpt.exe not present on this OS - the in-place conversion is unavailable. Convert from WinPE 1703+ media instead (docs/07-os-support-matrix.md)"
 }
 
 Write-Host "`n=== BIOS -> UEFI compatibility report ===" -ForegroundColor Cyan

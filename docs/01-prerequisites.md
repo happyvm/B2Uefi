@@ -22,13 +22,15 @@ Both scripts report any snapshot the VM already carries and print the exact comm
 
 ## 2. Guest OS compatibility
 
-| OS | Minimum version supported for in-place conversion | Tool |
+| OS | Minimum version for in-place conversion | Tool |
 |---|---|---|
-| Windows | Windows 10 1703+ / Windows Server 2012 R2+ (build ≥ 15063 for the native tool) | `MBR2GPT.exe` |
+| Windows | Windows 10 1703+ / **Windows Server 2019+** (build ≥ 15063) | `MBR2GPT.exe`, run from the running OS |
+| Windows (older) | Windows Server 2012 R2 and 2016 | `MBR2GPT.exe` from **WinPE 1703+ media only** — the tool is not present in these OSes |
 | Linux | Kernel with EFI support (virtually every distribution since 2015), `gdisk`/`sgdisk` (`gdisk`/`gptfdisk` package), `grub-efi-amd64`/`grub2-efi-x64` package available | `sgdisk` + `grub-install` |
 
 - x86_64 architecture required (32-bit UEFI exists but is out of scope for these scripts).
-- Windows Server 2008 R2 / Windows 7 and earlier: **no native tool**, migration out of scope for this repository (requires a reinstall or a third-party tool).
+- `MBR2GPT.exe` shipped with Windows 10 1703 (build 15063). **Windows Server 2016 is built on the 1607 codebase (build 14393) and does not include it**, nor does Server 2012 R2 — these require booting WinPE 1703+ media to convert.
+- Windows Server 2008 R2 and earlier, RHEL 6 and earlier: **rebuild rather than convert**. See the full [OS support matrix](07-os-support-matrix.md) before planning a wave.
 
 ## 3. System disk
 

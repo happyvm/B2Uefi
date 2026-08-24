@@ -51,4 +51,6 @@ Step 0 and step 5 are not optional ceremony. Step 0 is the only genuine rollback
 | `scripts/hyperv/` | PowerShell scripts to checkpoint, audit Generation 1 VMs, migrate them to Generation 2, and roll that migration back |
 | `tests/` | Convention tests (Pester + bash) run in CI; they never touch real infrastructure |
 
+Before planning anything, check the guest OS against the [support matrix](07-os-support-matrix.md): Windows Server 2008 R2 and earlier, and RHEL 6 and earlier, have no supported conversion path and should be rebuilt rather than migrated.
+
 Next: [docs/01-prerequisites.md](01-prerequisites.md).

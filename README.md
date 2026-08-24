@@ -21,14 +21,15 @@ A BIOS→UEFI migration touches two independent layers, and the order matters. C
 ## Quick start
 
 1. Read [docs/00-overview.md](docs/00-overview.md) to understand the two layers above.
-2. Follow the checklist in [docs/01-prerequisites.md](docs/01-prerequisites.md) (backup, eligibility).
-3. Convert the guest OS:
+2. Check the guest OS in the [support matrix](docs/07-os-support-matrix.md) — not every version can be converted, and two common ones (Server 2012 R2 and 2016) need an offline route.
+3. Follow the checklist in [docs/01-prerequisites.md](docs/01-prerequisites.md) (backup, eligibility).
+4. Convert the guest OS:
    - Windows: [docs/02-windows-guide.md](docs/02-windows-guide.md)
    - Linux: [docs/03-linux-guide.md](docs/03-linux-guide.md)
-4. Switch the firmware on the hypervisor side:
+5. Switch the firmware on the hypervisor side:
    - VMware: [docs/04-vmware-guide.md](docs/04-vmware-guide.md)
    - Hyper-V: [docs/05-hyperv-guide.md](docs/05-hyperv-guide.md)
-5. If something goes wrong: [docs/06-troubleshooting-rollback.md](docs/06-troubleshooting-rollback.md)
+6. If something goes wrong: [docs/06-troubleshooting-rollback.md](docs/06-troubleshooting-rollback.md)
 
 ## Repository layout
 
@@ -41,6 +42,7 @@ docs/
   04-vmware-guide.md              VMware firmware switch (BIOS -> EFI)
   05-hyperv-guide.md              Hyper-V Generation 1 -> Generation 2 migration
   06-troubleshooting-rollback.md  Troubleshooting and rollback
+  07-os-support-matrix.md         Which guest OS versions can be migrated, and how
 
 scripts/
   windows/
