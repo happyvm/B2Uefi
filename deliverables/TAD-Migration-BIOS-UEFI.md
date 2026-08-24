@@ -40,6 +40,9 @@ numbersections: true
 | R4 | Red Hat Customer Portal — Red Hat Enterprise Linux Life Cycle |
 | R5 | Red Hat Customer Portal — UEFI Secure Boot in Red Hat Enterprise Linux 7 |
 | R6 | Broadcom/VMware — Switching virtual machine boot firmware |
+| R7 | Microsoft Learn — Credential Guard overview and requirements |
+| R8 | Microsoft Learn — What is Secured-core server for Windows Server |
+| R9 | Microsoft Learn — Hyper-V Generation 2 virtual machine security features |
 
 # Purpose and scope
 
@@ -183,6 +186,55 @@ For these two versions the conversion remains achievable, but only offline:
 
 > **Point of caution:** copying the `mbr2gpt.exe` binary from a newer Windows onto an older system is not supported by the vendor and is prohibited — the executable depends on the servicing stack of the OS it ships with.
 
+## What each Windows version actually gains
+
+The migration delivers value in two successive stages, and they must not be conflated when building the business case. **UEFI on its own** removes structural limits and unlocks the Generation 2 virtual machine. **UEFI plus Secure Boot** is what opens the security feature set — and what that set contains depends entirely on the Windows version.
+
+The table below reads: what is gained by switching the firmware, then what is additionally gained by enabling Secure Boot on top of it.
+
+| Version | Gained with UEFI alone | Additionally gained with UEFI + Secure Boot (+ TPM 2.0) |
+|---|---|---|
+| **2008 / 2008 R2** | — no supported migration path — | — |
+| **2012 / 2012 R2** | System disk > 2 TB (GPT); Hyper-V Generation 2 VM; faster boot | Secure Boot and Measured Boot (boot chain integrity); BitLocker sealed to a Secure Boot state rather than legacy boot data. **No VBS, no Credential Guard** — those require 2016 or later. |
+| **2016** | Same as above | Everything above, plus **Virtualization-based Security (VBS)**, **HVCI** (hypervisor-enforced code integrity), **Credential Guard** (manual enablement by GPO), and eligibility as a **shielded VM** guest. |
+| **2019** | Same as above | Same set as 2016. |
+| **2022** | Same as above | Everything above, plus **System Guard Secure Launch (DRTM)** and eligibility for the **Secured-core server** profile. |
+| **2025** | Same as above | Everything above, with **Credential Guard enabled by default** instead of requiring a GPO. |
+
+### The two inflection points
+
+Two versions change the nature of what the migration buys:
+
+- **Server 2016 is the security inflection point.** Before it, Secure Boot delivers boot integrity and nothing more. From 2016 onward, Secure Boot becomes the gateway to the isolation-based defences — VBS, HVCI, Credential Guard. A 2012 R2 estate migrated to UEFI gains a hardened boot chain, but it does **not** gain credential-theft protection: that arrives only with the operating system upgrade.
+- **Server 2022 raises the ceiling** with DRTM and the Secured-core profile, and **Server 2025 changes the default**, shipping with Credential Guard on unless explicitly disabled — which makes the UEFI + Secure Boot prerequisite non-negotiable rather than optional on that version.
+
+### Minimum version per capability
+
+| Capability | Minimum Windows Server | Requires UEFI | Requires Secure Boot | Requires TPM 2.0 |
+|---|---|---|---|---|
+| System disk > 2 TB (GPT) | Any | Yes | No | No |
+| Hyper-V Generation 2 guest | 2012 | Yes | No | No |
+| Secure Boot / Measured Boot | 2012 | Yes | Yes | Recommended |
+| VBS (Virtualization-based Security) | 2016 | Yes | Yes | Recommended |
+| HVCI / Memory integrity | 2016 | Yes | Yes | Recommended |
+| Credential Guard | 2016 (default-on from 2025) | Yes | Yes | Yes |
+| Shielded VM (as guest) | 2016 | Yes | Yes | Yes (vTPM) |
+| System Guard Secure Launch (DRTM) | 2022 | Yes | Yes | Yes |
+| Secured-core server profile | 2022 | Yes | Yes | Yes |
+
+### Prerequisite specific to virtual machines
+
+This is the point most often missed when planning: on a virtual machine, UEFI and Secure Boot are **necessary but not sufficient** for VBS and Credential Guard. The hypervisor must also expose the capabilities those features depend on.
+
+| Platform | Additional configuration required |
+|---|---|
+| **Hyper-V** | Generation 2 VM, virtual TPM enabled (`Enable-VMTPM`), and nested virtualization exposed to the guest (`Set-VMProcessor -ExposeVirtualizationExtensions $true`). |
+| **VMware** | VM hardware version 14 or later on vSphere 6.7+, EFI firmware with Secure Boot, and the VBS option enabled on the VM, which in turn exposes nested virtualization, IOMMU and a vTPM. |
+
+Consequently the migration described in this document is a **prerequisite for** these security features, not a deployment of them. Enabling VBS or Credential Guard is a separate project phase, to be scheduled after the UEFI boot has been validated, and to be assessed against its own compatibility constraints — nested virtualization in particular interacts with third-party hypervisor-level tooling and with some backup agents.
+
+> **Capabilities unlocked, not activated.** Every item in the tables above becomes *possible* after the migration. With the sole exception of Credential Guard on Server 2025, none of them is enabled automatically. Each requires explicit configuration and its own validation.
+
 ## Red Hat Enterprise Linux
 
 Applies equally to the compatible rebuilds of each generation (CentOS, AlmaLinux, Rocky Linux).
@@ -225,6 +277,8 @@ Several Secure Boot signing certificates reach expiry during **2026**, which aff
 ## Virtual TPM
 
 Windows 11, Credential Guard and VBS require, beyond UEFI, a TPM 2.0 exposed by the hypervisor. Enabling it is a separate operation, to be carried out after the UEFI boot has been validated.
+
+The per-version detail of which security capabilities each Windows release unlocks, and the hypervisor-side configuration they additionally require, is set out in "What each Windows version actually gains" above.
 
 # Delivered components
 
