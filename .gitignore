@@ -23,3 +23,6 @@ coverage*.xml
 *.swp
 .DS_Store
 Thumbs.db
+
+# Livrables Word generes depuis deliverables/*.md - ne pas versionner de binaires
+*.docx
