@@ -29,6 +29,12 @@
     not passed, and the hardware version supports it (>= 13), the script asks
     interactively whether to enable Secure Boot now rather than just reporting
     nothing to do. Skipped under -Force (nothing to prompt in unattended runs).
+
+    Converting a VM from BIOS to EFI (the initial migration) enables Secure
+    Boot automatically whenever the hardware version supports it (>= 13),
+    without asking - "capable and compatible" is treated as "do it". Pass
+    -DisableSecureBoot to opt out (e.g. for an unsigned Linux kernel), or
+    -EnableSecureBoot explicitly if you just want it stated up front.
 .PARAMETER VMName
     Exact name of the target VM.
 .PARAMETER OSRelease
@@ -48,7 +54,13 @@
     'efi' or 'bios' (default: 'efi').
 .PARAMETER EnableSecureBoot
     Also enables Secure Boot when switching to EFI. Passed through to
-    Set-VMFirmware.ps1 (requires hardware version >= 13).
+    Set-VMFirmware.ps1 (requires hardware version >= 13). Redundant for a
+    BIOS -> EFI conversion on compatible hardware - that already enables it
+    automatically - but harmless to state explicitly.
+.PARAMETER DisableSecureBoot
+    Opts out of the automatic Secure Boot enablement during a BIOS -> EFI
+    conversion on hardware that supports it. Use this for a guest that isn't
+    ready for Secure Boot yet (e.g. an unsigned Linux kernel).
 .PARAMETER Server
     vCenter or ESXi host to connect to. Omit if a PowerCLI session is already
     active.
@@ -101,6 +113,8 @@ param(
 
     [switch]$EnableSecureBoot,
 
+    [switch]$DisableSecureBoot,
+
     [ValidateNotNullOrEmpty()]
     [string]$Server,
 
@@ -122,6 +136,10 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+
+if ($EnableSecureBoot -and $DisableSecureBoot) {
+    throw "-EnableSecureBoot and -DisableSecureBoot are mutually exclusive."
+}
 
 # --- 0. OS support gate (docs/07-os-support-matrix.md) -------------------------
 # Only enforced when switching to EFI - going back to 'bios' has no OS support
@@ -250,15 +268,15 @@ if (-not $SkipAlreadyDoneCheck) {
         $currentSecureBoot = [bool](Get-SafeProperty -InputObject $currentBootOptions -Name 'EfiSecureBootEnabled')
     }
 
-    # Already on EFI, Secure Boot off, not explicitly asked for -> if the
-    # hardware version supports it, offer to enable it now instead of just
-    # reporting "nothing to do". Interactive only: under -Force there's no one
-    # to ask, so it's left off unless -EnableSecureBoot was passed explicitly.
-    if ($currentFirmware -eq 'efi' -and -not $currentSecureBoot -and -not $EnableSecureBoot -and -not $Force) {
-        $hwVersionRaw = Get-SafeProperty -InputObject $currentConfig -Name 'Version'
-        $hwVersionNumber = 0
-        if ($hwVersionRaw -match '(\d+)') { $hwVersionNumber = [int]$Matches[1] }
+    $hwVersionRaw = Get-SafeProperty -InputObject $currentConfig -Name 'Version'
+    $hwVersionNumber = 0
+    if ($hwVersionRaw -match '(\d+)') { $hwVersionNumber = [int]$Matches[1] }
 
+    if ($currentFirmware -eq 'efi' -and -not $currentSecureBoot -and -not $EnableSecureBoot -and -not $DisableSecureBoot -and -not $Force) {
+        # Already on EFI, Secure Boot off, not explicitly decided either way ->
+        # if the hardware supports it, offer to enable it now instead of just
+        # reporting "nothing to do". Interactive only: under -Force there's no
+        # one to ask.
         if ($hwVersionNumber -ge 13) {
             $query = "VM '$VMName' is on EFI firmware with Secure Boot currently OFF. Hardware version $hwVersionRaw supports Secure Boot."
             $caption = 'Enable Secure Boot now?'
@@ -267,6 +285,12 @@ if (-not $SkipAlreadyDoneCheck) {
                 $EnableSecureBoot = $true
             }
         }
+    } elseif ($Firmware -eq 'efi' -and $currentFirmware -ne 'efi' -and -not $EnableSecureBoot -and -not $DisableSecureBoot -and $hwVersionNumber -ge 13) {
+        # Not yet on EFI (this is the initial BIOS -> EFI conversion) and no
+        # explicit decision was made -> capable and compatible, so just do it,
+        # no need to ask.
+        Write-Host "Hardware version $hwVersionRaw supports Secure Boot - enabling it automatically as part of this EFI conversion (pass -DisableSecureBoot to opt out)." -ForegroundColor Cyan
+        $EnableSecureBoot = $true
     }
 
     $secureBootSatisfied = (-not $EnableSecureBoot) -or $currentSecureBoot
