@@ -105,16 +105,37 @@ if ($Firmware -eq 'efi') {
     $spec.BootOptions = $bootOptions
 }
 
+# Reads a property that may be genuinely absent (not merely $null) depending
+# on the PowerCLI/vCenter API version - a bare '.' access throws under
+# Set-StrictMode in that case rather than returning $null.
+function Get-SafeProperty {
+    param($InputObject, [Parameter(Mandatory)][string]$Name)
+    if ($InputObject -and $InputObject.PSObject.Properties[$Name]) {
+        return $InputObject.PSObject.Properties[$Name].Value
+    }
+    return $null
+}
+
 try {
     $taskMoRef = $vm.ExtensionData.ReconfigVM_Task($spec)
-    $taskView = Get-Task -Id ("Task-$($taskMoRef.Value)")
-    $taskView = $taskView | Wait-Task -ErrorAction Stop
+    $taskId = "Task-$($taskMoRef.Value)"
+    Get-Task -Id $taskId | Wait-Task -ErrorAction Stop | Out-Null
+    $taskView = Get-Task -Id $taskId
 } catch {
     throw "Firmware reconfiguration failed for VM '$VMName': $($_.Exception.Message)"
 }
 
-if ($taskView.State -ne 'Success') {
-    throw "The reconfiguration task did not complete successfully (state: $($taskView.State))."
+# Prefer the PowerCLI wrapper's own .State; fall back to the raw vSphere API's
+# TaskInfo.state via ExtensionData, which has existed since the earliest API
+# versions and is far less likely to be missing than the wrapper's property.
+$taskState = Get-SafeProperty -InputObject $taskView -Name 'State'
+if (-not $taskState) {
+    $taskInfo = Get-SafeProperty -InputObject (Get-SafeProperty -InputObject $taskView -Name 'ExtensionData') -Name 'Info'
+    $taskState = Get-SafeProperty -InputObject $taskInfo -Name 'State'
+}
+
+if ($taskState -ne 'Success') {
+    throw "The reconfiguration task did not complete successfully (state: $taskState)."
 }
 
 $vm = Get-VM -Name $VMName -ErrorAction Stop
