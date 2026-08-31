@@ -49,7 +49,9 @@ $ErrorActionPreference = 'Stop'
 if (-not (Get-Module -Name VMware.VimAutomation.Core -ListAvailable)) {
     throw "The VMware.VimAutomation.Core module (PowerCLI) is not installed. Install-Module VMware.PowerCLI."
 }
-if (-not $global:DefaultVIServers -or $global:DefaultVIServers.Count -eq 0) {
+$viServersVar = Get-Variable -Name DefaultVIServers -Scope Global -ErrorAction SilentlyContinue
+$viServers = if ($viServersVar) { $viServersVar.Value } else { $null }
+if (-not $viServers -or $viServers.Count -eq 0) {
     throw "No active PowerCLI session. Connect first with Connect-VIServer -Server <vcenter>."
 }
 

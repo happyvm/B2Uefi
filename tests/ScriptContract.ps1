@@ -27,6 +27,7 @@ $contract = @(
     @{ Path = 'vmware/Get-VMFirmwareReport.ps1';       Kind = 'ReadOnly' }
     @{ Path = 'vmware/Set-VMFirmware.ps1';             Kind = 'Destructive' }
     @{ Path = 'vmware/New-PreMigrationSnapshot.ps1';   Kind = 'Additive' }
+    @{ Path = 'vmware/Invoke-VMwareMigration.ps1';     Kind = 'Destructive' }
     @{ Path = 'hyperv/Get-VMGenerationReport.ps1';     Kind = 'ReadOnly' }
     @{ Path = 'hyperv/Convert-Gen1ToGen2.ps1';         Kind = 'Destructive' }
     @{ Path = 'hyperv/Restore-Gen1VM.ps1';             Kind = 'Destructive' }
