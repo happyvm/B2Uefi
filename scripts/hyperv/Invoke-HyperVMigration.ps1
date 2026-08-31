@@ -30,8 +30,19 @@
     Convert-Gen1ToGen2.ps1).
 .PARAMETER NewVMName
     Name of the new Generation 2 VM (default: same as VMName).
-.PARAMETER OSType
-    'Windows' or 'Linux' - determines the Secure Boot template applied.
+.PARAMETER OSRelease
+    Guest OS release running on the VM, checked against the support matrix in
+    docs/07-os-support-matrix.md before anything is touched. Also determines
+    the Secure Boot template passed to Convert-Gen1ToGen2.ps1 (Windows vs.
+    Linux family). Releases marked "Rebuild" in the matrix (2003/2008/2008 R2,
+    RHEL 5/6) have no supported Generation 2 path and are refused unless
+    -AllowUnsupportedOS is passed. Use OtherWindows/OtherLinux for a release
+    not covered by the matrix (e.g. Ubuntu/Debian/SUSE, or a Windows client
+    OS) - always allowed, with a reminder to verify support manually.
+.PARAMETER AllowUnsupportedOS
+    Proceeds even though -OSRelease is in the matrix's "Rebuild" bucket. Only
+    for a deliberate, informed exception - these releases have no supported
+    Generation 2 path (there is no firmware to switch to).
 .PARAMETER DisableSecureBoot
     Disables Secure Boot (needed for some unsigned Linux kernels). Passed
     through to Convert-Gen1ToGen2.ps1.
@@ -54,9 +65,9 @@
     Suppresses the confirmation prompt for the whole run (still shows the
     warning banner first).
 .EXAMPLE
-    .\Invoke-HyperVMigration.ps1 -VMName "srv-app01" -OSType Windows
+    .\Invoke-HyperVMigration.ps1 -VMName "srv-app01" -OSRelease WindowsServer2022
 .EXAMPLE
-    .\Invoke-HyperVMigration.ps1 -VMName "srv-web01" -OSType Linux -Start -Force
+    .\Invoke-HyperVMigration.ps1 -VMName "srv-web01" -OSRelease RHEL9 -Start -Force
 #>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
 param(
@@ -68,8 +79,16 @@ param(
     [string]$NewVMName = $VMName,
 
     [Parameter(Mandatory)]
-    [ValidateSet('Windows', 'Linux')]
-    [string]$OSType,
+    [ValidateSet(
+        'WindowsServer2003', 'WindowsServer2008', 'WindowsServer2008R2',
+        'WindowsServer2012', 'WindowsServer2012R2', 'WindowsServer2016',
+        'WindowsServer2019', 'WindowsServer2022', 'WindowsServer2025',
+        'RHEL5', 'RHEL6', 'RHEL7', 'RHEL8', 'RHEL9', 'RHEL10',
+        'OtherWindows', 'OtherLinux'
+    )]
+    [string]$OSRelease,
+
+    [switch]$AllowUnsupportedOS,
 
     [switch]$DisableSecureBoot,
 
@@ -91,6 +110,51 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# --- 0. OS support gate (docs/07-os-support-matrix.md) -------------------------
+# Verdicts:
+#   Supported        - convert in place, no caveats
+#   SupportedOffline - convertible, but MBR2GPT is not native: the guest disk
+#                       conversion step needs WinPE 1703+ media
+#   SupportedButEOL  - technically convertible, but the OS itself is EOL
+#   Unsupported      - "Rebuild" bucket: no supported Generation 2 path at all
+#                       (there is no firmware to switch to); refused unless
+#                       -AllowUnsupportedOS is passed
+#   Unknown          - not in the matrix (e.g. Ubuntu/Debian/SUSE, Windows
+#                       client) - always allowed, verify manually
+$osSupportMatrix = @{
+    WindowsServer2003   = @{ Family = 'Windows'; Verdict = 'Unsupported'; Detail = 'Ended Jul 2015 - no UEFI boot support at all.' }
+    WindowsServer2008   = @{ Family = 'Windows'; Verdict = 'Unsupported'; Detail = 'Ended Jan 2020 - not a supported Hyper-V Generation 2 guest.' }
+    WindowsServer2008R2 = @{ Family = 'Windows'; Verdict = 'Unsupported'; Detail = 'Ended Jan 2020 - not a supported Hyper-V Generation 2 guest.' }
+    WindowsServer2012   = @{ Family = 'Windows'; Verdict = 'SupportedOffline'; Detail = 'ESU ends Oct 2026 - MBR2GPT native unavailable; convert the guest disk from WinPE 1703+ media first.' }
+    WindowsServer2012R2 = @{ Family = 'Windows'; Verdict = 'SupportedOffline'; Detail = 'ESU ends Oct 2026 - MBR2GPT native unavailable; convert the guest disk from WinPE 1703+ media first.' }
+    WindowsServer2016   = @{ Family = 'Windows'; Verdict = 'SupportedOffline'; Detail = 'Ends Jan 2027 - MBR2GPT native unavailable; convert the guest disk from WinPE 1703+ media first.' }
+    WindowsServer2019   = @{ Family = 'Windows'; Verdict = 'Supported'; Detail = 'Ends Jan 2029.' }
+    WindowsServer2022   = @{ Family = 'Windows'; Verdict = 'Supported'; Detail = 'Ends Oct 2031.' }
+    WindowsServer2025   = @{ Family = 'Windows'; Verdict = 'Supported'; Detail = 'Ends Nov 2034.' }
+    RHEL5               = @{ Family = 'Linux'; Verdict = 'Unsupported'; Detail = 'EOL Nov 2020 - UEFI boot is not viable on x86_64.' }
+    RHEL6               = @{ Family = 'Linux'; Verdict = 'Unsupported'; Detail = 'EOL Nov 2020 (ELS ended Jun 2024) - GPT/UEFI path is unreliable; no Generation 2 path (needs 7.0+).' }
+    RHEL7               = @{ Family = 'Linux'; Verdict = 'SupportedButEOL'; Detail = 'EOL Jun 2024 (ELS available) - technically convertible, but consider folding into a RHEL 8/9 upgrade instead.' }
+    RHEL8               = @{ Family = 'Linux'; Verdict = 'Supported'; Detail = 'Maintenance to May 2029.' }
+    RHEL9               = @{ Family = 'Linux'; Verdict = 'Supported'; Detail = 'Maintenance to May 2032.' }
+    RHEL10              = @{ Family = 'Linux'; Verdict = 'Supported'; Detail = 'Maintenance to ~May 2035.' }
+    OtherWindows        = @{ Family = 'Windows'; Verdict = 'Unknown'; Detail = 'Not in docs/07-os-support-matrix.md - verify UEFI/Secure Boot/Generation 2 support manually before proceeding.' }
+    OtherLinux          = @{ Family = 'Linux'; Verdict = 'Unknown'; Detail = 'Not in docs/07-os-support-matrix.md - verify UEFI/Secure Boot/Generation 2 support manually before proceeding.' }
+}
+
+$osEntry = $osSupportMatrix[$OSRelease]
+switch ($osEntry.Verdict) {
+    'Unsupported' {
+        if (-not $AllowUnsupportedOS) {
+            throw "OSRelease '$OSRelease' has no supported Generation 2 path: $($osEntry.Detail) See docs/07-os-support-matrix.md. Rebuild the workload on a supported OS instead, or pass -AllowUnsupportedOS to proceed anyway (not recommended)."
+        }
+        Write-Warning "OSRelease '$OSRelease' is UNSUPPORTED ($($osEntry.Detail)) - proceeding anyway because -AllowUnsupportedOS was passed."
+    }
+    'SupportedOffline' { Write-Warning "OSRelease '$OSRelease': $($osEntry.Detail)" }
+    'SupportedButEOL' { Write-Warning "OSRelease '$OSRelease': $($osEntry.Detail)" }
+    'Unknown' { Write-Warning "OSRelease '$OSRelease': $($osEntry.Detail)" }
+}
+$OSType = $osEntry.Family
+
 $scriptDir = $PSScriptRoot
 $reportScript = Join-Path $scriptDir 'Get-VMGenerationReport.ps1'
 $checkpointScript = Join-Path $scriptDir 'New-PreMigrationCheckpoint.ps1'
@@ -111,7 +175,7 @@ if (-not (Get-Module -Name Hyper-V)) {
 }
 
 Write-Host "`n=== Hyper-V Generation 1 -> Generation 2 migration: $VMName -> $NewVMName ===" -ForegroundColor Cyan
-Write-Host "OS type: $OSType$(if ($DisableSecureBoot) { ' (Secure Boot disabled)' })"
+Write-Host "OS release: $OSRelease ($OSType family)$(if ($DisableSecureBoot) { ' - Secure Boot disabled' })"
 Write-Warning "This assumes the guest OS disk has ALREADY been converted from MBR to GPT with a UEFI bootloader. Migrating a guest that isn't ready to Generation 2 will make it fail to boot."
 
 # --- 2. Step 1/3: report (always runs, read-only, informational) --------------
