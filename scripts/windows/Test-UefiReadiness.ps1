@@ -60,7 +60,7 @@ try {
     $partStatus = if ($disk.PartitionStyle -eq 'MBR') { 'OK' } else { 'INFO' }
     Add-Result -Check 'Partition style' -Status $partStatus -Detail "Disk $DiskNumber is currently $($disk.PartitionStyle)"
 
-    $partCount = (Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue |
+    $partCount = @(Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue |
         Where-Object { $_.Type -ne 'Reserved' }).Count
     if ($partCount -le 3) {
         Add-Result -Check 'Partition count' -Status 'OK' -Detail "$partCount partition(s) detected (MBR2GPT limit: 3)"

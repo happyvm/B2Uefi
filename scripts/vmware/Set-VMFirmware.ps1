@@ -51,7 +51,7 @@ if (-not (Get-Module -Name VMware.VimAutomation.Core -ListAvailable)) {
 }
 $viServersVar = Get-Variable -Name DefaultVIServers -Scope Global -ErrorAction SilentlyContinue
 $viServers = if ($viServersVar) { $viServersVar.Value } else { $null }
-if (-not $viServers -or $viServers.Count -eq 0) {
+if (-not $viServers -or @($viServers).Count -eq 0) {
     throw "No active PowerCLI session. Connect first with Connect-VIServer -Server <vcenter>."
 }
 
