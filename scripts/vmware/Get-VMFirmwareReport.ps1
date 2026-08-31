@@ -34,20 +34,35 @@ if (-not $vms) {
     return
 }
 
+# Some Config sub-fields (MotherboardLayout, BootOptions) were added to the
+# vSphere API in later versions than others. Depending on the vCenter/ESXi API
+# version and the VM's own hardware version, the ExtensionData object handed
+# back by PowerCLI can be missing them entirely - not merely $null, but absent
+# as a property - which throws under Set-StrictMode. Read defensively via
+# PSObject.Properties instead of a bare '.' access.
+function Get-ConfigProperty {
+    param($InputObject, [Parameter(Mandatory)][string]$Name)
+    if ($InputObject -and $InputObject.PSObject.Properties[$Name]) {
+        return $InputObject.PSObject.Properties[$Name].Value
+    }
+    return $null
+}
+
 $report = foreach ($vm in $vms) {
     $view = $vm.ExtensionData
     $hwVersionNumber = 0
     if ($view.Config.Version -match '(\d+)') {
         $hwVersionNumber = [int]$Matches[1]
     }
+    $bootOptions = Get-ConfigProperty -InputObject $view.Config -Name 'BootOptions'
     [pscustomobject]@{
         Name              = $vm.Name
         PowerState        = $vm.PowerState
         Firmware          = $view.Config.Firmware
         HardwareVersion   = $view.Config.Version
         SecureBootCapable = $hwVersionNumber -ge 13
-        SecureBootEnabled = $view.Config.BootOptions.EfiSecureBootEnabled
-        MotherboardLayout = $view.Config.MotherboardLayout
+        SecureBootEnabled = Get-ConfigProperty -InputObject $bootOptions -Name 'EfiSecureBootEnabled'
+        MotherboardLayout = Get-ConfigProperty -InputObject $view.Config -Name 'MotherboardLayout'
     }
 }
 
