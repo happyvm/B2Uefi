@@ -99,7 +99,7 @@ foreach ($disk in $disks) {
     }
 }
 
-if (Get-VM -Name $NewVMName -ErrorAction SilentlyContinue) {
+if ($NewVMName -ne $SourceVMName -and (Get-VM -Name $NewVMName -ErrorAction SilentlyContinue)) {
     throw "A VM named '$NewVMName' already exists. Choose a different -NewVMName, or rename/remove the existing VM."
 }
 

@@ -12,7 +12,7 @@
 # Read docs/03-linux-guide.md and docs/01-prerequisites.md before running it,
 # and make sure a VM snapshot/checkpoint has been taken beforehand.
 
-set -euo pipefail
+set -Eeuo pipefail
 
 DISK=""
 ESP_SIZE_MB=512
