@@ -24,6 +24,11 @@
     pass -Force to skip the prompt for unattended automation, or -WhatIf to
     preview without changing anything. If the snapshot step fails, the script
     stops before ever touching the firmware.
+
+    If the VM is already on EFI with Secure Boot off, -EnableSecureBoot was
+    not passed, and the hardware version supports it (>= 13), the script asks
+    interactively whether to enable Secure Boot now rather than just reporting
+    nothing to do. Skipped under -Force (nothing to prompt in unattended runs).
 .PARAMETER VMName
     Exact name of the target VM.
 .PARAMETER OSRelease
@@ -244,6 +249,26 @@ if (-not $SkipAlreadyDoneCheck) {
         $currentBootOptions = Get-SafeProperty -InputObject $currentConfig -Name 'BootOptions'
         $currentSecureBoot = [bool](Get-SafeProperty -InputObject $currentBootOptions -Name 'EfiSecureBootEnabled')
     }
+
+    # Already on EFI, Secure Boot off, not explicitly asked for -> if the
+    # hardware version supports it, offer to enable it now instead of just
+    # reporting "nothing to do". Interactive only: under -Force there's no one
+    # to ask, so it's left off unless -EnableSecureBoot was passed explicitly.
+    if ($currentFirmware -eq 'efi' -and -not $currentSecureBoot -and -not $EnableSecureBoot -and -not $Force) {
+        $hwVersionRaw = Get-SafeProperty -InputObject $currentConfig -Name 'Version'
+        $hwVersionNumber = 0
+        if ($hwVersionRaw -match '(\d+)') { $hwVersionNumber = [int]$Matches[1] }
+
+        if ($hwVersionNumber -ge 13) {
+            $query = "VM '$VMName' is on EFI firmware with Secure Boot currently OFF. Hardware version $hwVersionRaw supports Secure Boot."
+            $caption = 'Enable Secure Boot now?'
+            if ($PSCmdlet.ShouldContinue($query, $caption)) {
+                Write-Host "Enabling Secure Boot on '$VMName' as requested." -ForegroundColor Cyan
+                $EnableSecureBoot = $true
+            }
+        }
+    }
+
     $secureBootSatisfied = (-not $EnableSecureBoot) -or $currentSecureBoot
 
     if ($currentFirmware -eq $Firmware -and $secureBootSatisfied) {
