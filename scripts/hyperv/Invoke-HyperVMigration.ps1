@@ -25,6 +25,14 @@
     (SupportsShouldProcess); pass -Force to skip the prompt for unattended
     automation, or -WhatIf to preview without changing anything. If the
     checkpoint step fails, the script stops before ever touching the VM.
+
+    If the VM is already Generation 2 (already migrated), the checkpoint and
+    conversion steps are skipped - Convert-Gen1ToGen2.ps1 cannot be re-run on
+    a Generation 2 VM. If Secure Boot is currently off, -DisableSecureBoot was
+    not passed, and the script would otherwise just report nothing to do, it
+    asks interactively whether to enable Secure Boot now instead (taking a
+    safety checkpoint first, unless -SkipCheckpoint) via the native Hyper-V
+    Set-VMFirmware cmdlet. Skipped under -Force.
 .PARAMETER VMName
     Name of the Generation 1 VM to migrate (passed as -SourceVMName to
     Convert-Gen1ToGen2.ps1).
@@ -64,6 +72,10 @@
 .PARAMETER Force
     Suppresses the confirmation prompt for the whole run (still shows the
     warning banner first).
+.PARAMETER SkipAlreadyDoneCheck
+    Skips the "VM already Generation 2" check (and the Secure Boot offer it
+    can trigger) and always attempts the checkpoint + conversion steps, even
+    though Convert-Gen1ToGen2.ps1 will refuse a VM that isn't Generation 1.
 .EXAMPLE
     .\Invoke-HyperVMigration.ps1 -VMName "srv-app01" -OSRelease WindowsServer2022
 .EXAMPLE
@@ -103,6 +115,8 @@ param(
     [switch]$SkipReport,
 
     [switch]$SkipCheckpoint,
+
+    [switch]$SkipAlreadyDoneCheck,
 
     [switch]$Force
 )
@@ -188,6 +202,71 @@ if (-not $SkipReport) {
     }
 } else {
     Write-Host "`n--- Step 1/3: generation report (skipped: -SkipReport) ---" -ForegroundColor Yellow
+}
+
+# --- Already-done check: skip the checkpoint + conversion steps if the VM ----
+# is already Generation 2 - Convert-Gen1ToGen2.ps1 refuses to run against one.
+if (-not $SkipAlreadyDoneCheck) {
+    function Get-SafeProperty {
+        param($InputObject, [Parameter(Mandatory)][string]$Name)
+        if ($InputObject -and $InputObject.PSObject.Properties[$Name]) {
+            return $InputObject.PSObject.Properties[$Name].Value
+        }
+        return $null
+    }
+
+    try {
+        $currentVM = Get-VM -Name $VMName -ErrorAction Stop
+    } catch {
+        throw "Could not read the current state of VM '$VMName': $($_.Exception.Message)"
+    }
+    if (@($currentVM).Count -gt 1) {
+        throw "Multiple VMs match the name '$VMName'. Use an exact, unambiguous name."
+    }
+
+    if ($currentVM.Generation -eq 2) {
+        try {
+            $currentFirmwareInfo = Get-VMFirmware -VMName $VMName -ErrorAction Stop
+        } catch {
+            throw "Could not read the current firmware state of VM '$VMName': $($_.Exception.Message)"
+        }
+        $currentSecureBootOn = (Get-SafeProperty -InputObject $currentFirmwareInfo -Name 'SecureBoot') -eq 'On'
+
+        # Already Generation 2, Secure Boot off, not explicitly asked to keep
+        # it off, not unattended -> offer to enable it now via the native
+        # Hyper-V cmdlet instead of just reporting "nothing to do". A Gen 2 VM
+        # always supports Secure Boot, so there's no compatibility gate here
+        # (unlike the VMware hardware-version check).
+        if (-not $currentSecureBootOn -and -not $DisableSecureBoot -and -not $Force) {
+            $secureBootTemplate = if ($OSType -eq 'Windows') { 'MicrosoftWindows' } else { 'MicrosoftUEFICertificateAuthority' }
+            $query = "VM '$VMName' is already Generation 2 with Secure Boot currently OFF."
+            $caption = "Enable Secure Boot now (template: $secureBootTemplate)?"
+            if ($PSCmdlet.ShouldContinue($query, $caption)) {
+                if (-not $SkipCheckpoint) {
+                    Write-Host "`n--- Taking a safety checkpoint before enabling Secure Boot ---" -ForegroundColor Cyan
+                    try {
+                        & $checkpointScript -VMName $VMName -CheckpointName $CheckpointName -Confirm:$false
+                    } catch {
+                        throw "Pre-change checkpoint failed for '$VMName': $($_.Exception.Message). Aborting before touching Secure Boot."
+                    }
+                } else {
+                    Write-Warning "Checkpoint SKIPPED (-SkipCheckpoint) - no rollback point will exist for this change."
+                }
+
+                Write-Host "Enabling Secure Boot on '$VMName' (template: $secureBootTemplate)..." -ForegroundColor Cyan
+                try {
+                    Set-VMFirmware -VMName $VMName -EnableSecureBoot On -SecureBootTemplate $secureBootTemplate -ErrorAction Stop
+                } catch {
+                    throw "Failed to enable Secure Boot on '$VMName': $($_.Exception.Message)"
+                }
+                Write-Host "`nSecure Boot enabled on '$VMName'." -ForegroundColor Green
+                return
+            }
+        }
+
+        Write-Host "`nVM '$VMName' is already Generation 2$(if ($currentSecureBootOn) { ' with Secure Boot enabled' }) - nothing to do. Skipping the checkpoint and conversion steps." -ForegroundColor Green
+        return
+    }
 }
 
 if ($Force) {
