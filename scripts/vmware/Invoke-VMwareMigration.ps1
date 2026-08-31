@@ -24,6 +24,11 @@
     pass -Force to skip the prompt for unattended automation, or -WhatIf to
     preview without changing anything. If the snapshot step fails, the script
     stops before ever touching the firmware.
+
+    If the VM is already on EFI with Secure Boot off, -EnableSecureBoot was
+    not passed, and the hardware version supports it (>= 13), the script asks
+    interactively whether to enable Secure Boot now rather than just reporting
+    nothing to do. Skipped under -Force (nothing to prompt in unattended runs).
 .PARAMETER VMName
     Exact name of the target VM.
 .PARAMETER OSRelease
@@ -63,6 +68,10 @@
 .PARAMETER Force
     Suppresses the confirmation prompt for the whole run (still shows the
     warning banner first).
+.PARAMETER SkipAlreadyDoneCheck
+    Skips the "VM already on the target firmware" check and always runs the
+    snapshot + firmware steps, even if they would be a no-op. Use this only
+    to force a fresh snapshot on a VM that's already on the target firmware.
 .EXAMPLE
     .\Invoke-VMwareMigration.ps1 -VMName "srv-app01" -OSRelease WindowsServer2022 -Server vcenter.corp.local -Firmware efi
 .EXAMPLE
@@ -105,6 +114,8 @@ param(
     [switch]$SkipReport,
 
     [switch]$SkipSnapshot,
+
+    [switch]$SkipAlreadyDoneCheck,
 
     [switch]$Force
 )
@@ -207,6 +218,63 @@ if (-not $SkipReport) {
     }
 } else {
     Write-Host "`n--- Step 1/3: firmware report (skipped: -SkipReport) ---" -ForegroundColor Yellow
+}
+
+# --- Already-done check: skip the snapshot + firmware steps if the VM is -----
+# already on the target firmware (and, when requested, Secure Boot already
+# matches) - mirrors Set-VMFirmware.ps1's own no-op guard, but here it also
+# saves an unnecessary snapshot.
+if (-not $SkipAlreadyDoneCheck) {
+    function Get-SafeProperty {
+        param($InputObject, [Parameter(Mandatory)][string]$Name)
+        if ($InputObject -and $InputObject.PSObject.Properties[$Name]) {
+            return $InputObject.PSObject.Properties[$Name].Value
+        }
+        return $null
+    }
+
+    try {
+        $currentVM = Get-VM -Name $VMName -ErrorAction Stop
+    } catch {
+        throw "Could not read the current state of VM '$VMName': $($_.Exception.Message)"
+    }
+    if (@($currentVM).Count -gt 1) {
+        throw "Multiple VMs match the name '$VMName'. Use an exact, unambiguous name."
+    }
+
+    $currentConfig = $currentVM.ExtensionData.Config
+    $currentFirmware = Get-SafeProperty -InputObject $currentConfig -Name 'Firmware'
+    $currentSecureBoot = $false
+    if ($currentFirmware -eq 'efi') {
+        $currentBootOptions = Get-SafeProperty -InputObject $currentConfig -Name 'BootOptions'
+        $currentSecureBoot = [bool](Get-SafeProperty -InputObject $currentBootOptions -Name 'EfiSecureBootEnabled')
+    }
+
+    # Already on EFI, Secure Boot off, not explicitly asked for -> if the
+    # hardware version supports it, offer to enable it now instead of just
+    # reporting "nothing to do". Interactive only: under -Force there's no one
+    # to ask, so it's left off unless -EnableSecureBoot was passed explicitly.
+    if ($currentFirmware -eq 'efi' -and -not $currentSecureBoot -and -not $EnableSecureBoot -and -not $Force) {
+        $hwVersionRaw = Get-SafeProperty -InputObject $currentConfig -Name 'Version'
+        $hwVersionNumber = 0
+        if ($hwVersionRaw -match '(\d+)') { $hwVersionNumber = [int]$Matches[1] }
+
+        if ($hwVersionNumber -ge 13) {
+            $query = "VM '$VMName' is on EFI firmware with Secure Boot currently OFF. Hardware version $hwVersionRaw supports Secure Boot."
+            $caption = 'Enable Secure Boot now?'
+            if ($PSCmdlet.ShouldContinue($query, $caption)) {
+                Write-Host "Enabling Secure Boot on '$VMName' as requested." -ForegroundColor Cyan
+                $EnableSecureBoot = $true
+            }
+        }
+    }
+
+    $secureBootSatisfied = (-not $EnableSecureBoot) -or $currentSecureBoot
+
+    if ($currentFirmware -eq $Firmware -and $secureBootSatisfied) {
+        Write-Host "`nVM '$VMName' is already on firmware '$Firmware'$(if ($EnableSecureBoot) { ' with Secure Boot enabled' }) - nothing to do. Skipping the snapshot and firmware steps." -ForegroundColor Green
+        return
+    }
 }
 
 if ($Force) {
