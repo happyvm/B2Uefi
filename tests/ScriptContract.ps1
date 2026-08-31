@@ -30,6 +30,7 @@ $contract = @(
     @{ Path = 'vmware/Invoke-VMwareMigration.ps1';     Kind = 'Destructive' }
     @{ Path = 'hyperv/Get-VMGenerationReport.ps1';     Kind = 'ReadOnly' }
     @{ Path = 'hyperv/Convert-Gen1ToGen2.ps1';         Kind = 'Destructive' }
+    @{ Path = 'hyperv/Invoke-HyperVMigration.ps1';     Kind = 'Destructive' }
     @{ Path = 'hyperv/Restore-Gen1VM.ps1';             Kind = 'Destructive' }
     @{ Path = 'hyperv/New-PreMigrationCheckpoint.ps1'; Kind = 'Additive' }
 )

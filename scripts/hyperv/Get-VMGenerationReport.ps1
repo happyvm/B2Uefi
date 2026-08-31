@@ -31,7 +31,7 @@ if (-not $vms) {
 }
 
 $report = foreach ($vm in $vms) {
-    $disks = Get-VMHardDiskDrive -VMName $vm.Name
+    $disks = @(Get-VMHardDiskDrive -VMName $vm.Name)
     $diskFormats = $disks | ForEach-Object { [System.IO.Path]::GetExtension($_.Path).TrimStart('.').ToUpper() }
     $needsVhdxConversion = ($vm.Generation -eq 1) -and ($diskFormats -contains 'VHD')
 
@@ -48,9 +48,9 @@ $report = foreach ($vm in $vms) {
 
 $report | Sort-Object Name | Format-Table -AutoSize
 
-$gen1Count = ($report | Where-Object { $_.Generation -eq 1 }).Count
-$vhdCount = ($report | Where-Object { $_.RequiresVhdxConvert }).Count
-Write-Host "`n$gen1Count of $($report.Count) analyzed VM(s) are Generation 1." -ForegroundColor Cyan
+$gen1Count = @($report | Where-Object { $_.Generation -eq 1 }).Count
+$vhdCount = @($report | Where-Object { $_.RequiresVhdxConvert }).Count
+Write-Host "`n$gen1Count of $(@($report).Count) analyzed VM(s) are Generation 1." -ForegroundColor Cyan
 if ($vhdCount -gt 0) {
     Write-Host "$vhdCount VM(s) require a VHD -> VHDX conversion before migration (Convert-VHD)." -ForegroundColor Yellow
 }

@@ -24,7 +24,7 @@ if (-not (Get-Module -Name VMware.VimAutomation.Core -ListAvailable)) {
 }
 $viServersVar = Get-Variable -Name DefaultVIServers -Scope Global -ErrorAction SilentlyContinue
 $viServers = if ($viServersVar) { $viServersVar.Value } else { $null }
-if (-not $viServers -or $viServers.Count -eq 0) {
+if (-not $viServers -or @($viServers).Count -eq 0) {
     throw "No active PowerCLI session. Connect first with Connect-VIServer -Server <vcenter>."
 }
 
@@ -53,5 +53,5 @@ $report = foreach ($vm in $vms) {
 
 $report | Sort-Object Name | Format-Table -AutoSize
 
-$biosCount = ($report | Where-Object { $_.Firmware -eq 'bios' }).Count
-Write-Host "`n$biosCount of $($report.Count) analyzed VM(s) are still on BIOS firmware." -ForegroundColor Cyan
+$biosCount = @($report | Where-Object { $_.Firmware -eq 'bios' }).Count
+Write-Host "`n$biosCount of $(@($report).Count) analyzed VM(s) are still on BIOS firmware." -ForegroundColor Cyan

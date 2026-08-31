@@ -26,6 +26,19 @@
     stops before ever touching the firmware.
 .PARAMETER VMName
     Exact name of the target VM.
+.PARAMETER OSRelease
+    Guest OS release running on the VM, checked against the support matrix in
+    docs/07-os-support-matrix.md before anything is touched. Only enforced
+    when -Firmware is 'efi' (switching back to 'bios' has no OS support
+    constraint). Releases marked "Rebuild" in the matrix (Windows
+    2003/2008/2008 R2, RHEL 5/6) cannot boot UEFI in practice and are refused
+    unless -AllowUnsupportedOS is passed. Use OtherWindows/OtherLinux for a
+    release not covered by the matrix (e.g. Ubuntu/Debian/SUSE, or a Windows
+    client OS) - always allowed, with a reminder to verify support manually.
+.PARAMETER AllowUnsupportedOS
+    Proceeds even though -OSRelease is in the matrix's "Rebuild" bucket. Only
+    for a deliberate, informed exception - these releases cannot boot UEFI in
+    practice.
 .PARAMETER Firmware
     'efi' or 'bios' (default: 'efi').
 .PARAMETER EnableSecureBoot
@@ -51,9 +64,9 @@
     Suppresses the confirmation prompt for the whole run (still shows the
     warning banner first).
 .EXAMPLE
-    .\Invoke-VMwareMigration.ps1 -VMName "srv-app01" -Server vcenter.corp.local -Firmware efi
+    .\Invoke-VMwareMigration.ps1 -VMName "srv-app01" -OSRelease WindowsServer2022 -Server vcenter.corp.local -Firmware efi
 .EXAMPLE
-    .\Invoke-VMwareMigration.ps1 -VMName "srv-app01" -Firmware efi -EnableSecureBoot -Force
+    .\Invoke-VMwareMigration.ps1 -VMName "srv-app01" -OSRelease RHEL9 -Firmware efi -EnableSecureBoot -Force
     Assumes an existing PowerCLI session (Connect-VIServer already run).
 #>
 [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'High')]
@@ -61,6 +74,18 @@ param(
     [Parameter(Mandatory)]
     [ValidateNotNullOrEmpty()]
     [string]$VMName,
+
+    [Parameter(Mandatory)]
+    [ValidateSet(
+        'WindowsServer2003', 'WindowsServer2008', 'WindowsServer2008R2',
+        'WindowsServer2012', 'WindowsServer2012R2', 'WindowsServer2016',
+        'WindowsServer2019', 'WindowsServer2022', 'WindowsServer2025',
+        'RHEL5', 'RHEL6', 'RHEL7', 'RHEL8', 'RHEL9', 'RHEL10',
+        'OtherWindows', 'OtherLinux'
+    )]
+    [string]$OSRelease,
+
+    [switch]$AllowUnsupportedOS,
 
     [ValidateSet('efi', 'bios')]
     [string]$Firmware = 'efi',
@@ -87,6 +112,52 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
+# --- 0. OS support gate (docs/07-os-support-matrix.md) -------------------------
+# Only enforced when switching to EFI - going back to 'bios' has no OS support
+# constraint. Verdicts:
+#   Supported        - convert in place, no caveats
+#   SupportedOffline - convertible, but MBR2GPT is not native: the guest disk
+#                       conversion step needs WinPE 1703+ media
+#   SupportedButEOL  - technically convertible, but the OS itself is EOL
+#   Unsupported      - "Rebuild" bucket: cannot boot UEFI in practice; refused
+#                       unless -AllowUnsupportedOS is passed
+#   Unknown          - not in the matrix (e.g. Ubuntu/Debian/SUSE, Windows
+#                       client) - always allowed, verify manually
+$osSupportMatrix = @{
+    WindowsServer2003   = @{ Verdict = 'Unsupported'; Detail = 'Ended Jul 2015 - no UEFI boot support at all.' }
+    WindowsServer2008   = @{ Verdict = 'Unsupported'; Detail = 'Ended Jan 2020 - guest cannot boot UEFI in practice.' }
+    WindowsServer2008R2 = @{ Verdict = 'Unsupported'; Detail = 'Ended Jan 2020 - guest cannot boot UEFI in practice.' }
+    WindowsServer2012   = @{ Verdict = 'SupportedOffline'; Detail = 'ESU ends Oct 2026 - MBR2GPT native unavailable; convert the guest disk from WinPE 1703+ media first.' }
+    WindowsServer2012R2 = @{ Verdict = 'SupportedOffline'; Detail = 'ESU ends Oct 2026 - MBR2GPT native unavailable; convert the guest disk from WinPE 1703+ media first.' }
+    WindowsServer2016   = @{ Verdict = 'SupportedOffline'; Detail = 'Ends Jan 2027 - MBR2GPT native unavailable; convert the guest disk from WinPE 1703+ media first.' }
+    WindowsServer2019   = @{ Verdict = 'Supported'; Detail = 'Ends Jan 2029.' }
+    WindowsServer2022   = @{ Verdict = 'Supported'; Detail = 'Ends Oct 2031.' }
+    WindowsServer2025   = @{ Verdict = 'Supported'; Detail = 'Ends Nov 2034.' }
+    RHEL5               = @{ Verdict = 'Unsupported'; Detail = 'EOL Nov 2020 - UEFI boot is not viable on x86_64.' }
+    RHEL6               = @{ Verdict = 'Unsupported'; Detail = 'EOL Nov 2020 (ELS ended Jun 2024) - GPT/UEFI path is unreliable.' }
+    RHEL7               = @{ Verdict = 'SupportedButEOL'; Detail = 'EOL Jun 2024 (ELS available) - technically convertible, but consider folding into a RHEL 8/9 upgrade instead.' }
+    RHEL8               = @{ Verdict = 'Supported'; Detail = 'Maintenance to May 2029.' }
+    RHEL9               = @{ Verdict = 'Supported'; Detail = 'Maintenance to May 2032.' }
+    RHEL10              = @{ Verdict = 'Supported'; Detail = 'Maintenance to ~May 2035.' }
+    OtherWindows        = @{ Verdict = 'Unknown'; Detail = 'Not in docs/07-os-support-matrix.md - verify UEFI/Secure Boot support manually before proceeding.' }
+    OtherLinux          = @{ Verdict = 'Unknown'; Detail = 'Not in docs/07-os-support-matrix.md - verify UEFI/Secure Boot support manually before proceeding.' }
+}
+
+if ($Firmware -eq 'efi') {
+    $osEntry = $osSupportMatrix[$OSRelease]
+    switch ($osEntry.Verdict) {
+        'Unsupported' {
+            if (-not $AllowUnsupportedOS) {
+                throw "OSRelease '$OSRelease' cannot boot UEFI in practice: $($osEntry.Detail) See docs/07-os-support-matrix.md. Rebuild the workload on a supported OS instead, or pass -AllowUnsupportedOS to proceed anyway (not recommended)."
+            }
+            Write-Warning "OSRelease '$OSRelease' is UNSUPPORTED ($($osEntry.Detail)) - proceeding anyway because -AllowUnsupportedOS was passed."
+        }
+        'SupportedOffline' { Write-Warning "OSRelease '$OSRelease': $($osEntry.Detail)" }
+        'SupportedButEOL' { Write-Warning "OSRelease '$OSRelease': $($osEntry.Detail)" }
+        'Unknown' { Write-Warning "OSRelease '$OSRelease': $($osEntry.Detail)" }
+    }
+}
+
 $scriptDir = $PSScriptRoot
 $reportScript = Join-Path $scriptDir 'Get-VMFirmwareReport.ps1'
 $snapshotScript = Join-Path $scriptDir 'New-PreMigrationSnapshot.ps1'
@@ -109,7 +180,7 @@ if (-not (Get-Module -Name VMware.VimAutomation.Core)) {
 # --- 2. vCenter/ESXi connection ------------------------------------------------
 $viServersVar = Get-Variable -Name DefaultVIServers -Scope Global -ErrorAction SilentlyContinue
 $viServers = if ($viServersVar) { $viServersVar.Value } else { $null }
-if (-not $viServers -or $viServers.Count -eq 0) {
+if (-not $viServers -or @($viServers).Count -eq 0) {
     if (-not $Server) {
         throw "No active PowerCLI session and no -Server given. Either run Connect-VIServer first, or pass -Server (and optionally -Credential)."
     }
@@ -122,6 +193,7 @@ if (-not $viServers -or $viServers.Count -eq 0) {
 }
 
 Write-Host "`n=== VMware BIOS -> UEFI migration: $VMName ===" -ForegroundColor Cyan
+Write-Host "OS release: $OSRelease"
 Write-Host "Target firmware: $Firmware$(if ($EnableSecureBoot) { ' (+ Secure Boot)' })"
 Write-Warning "This assumes the guest OS disk has ALREADY been converted from MBR to GPT with a UEFI bootloader. Switching firmware on a guest that isn't ready will make the VM fail to boot."
 
